@@ -8,6 +8,7 @@ type SignUpResult = AuthResult & { hasSession: boolean };
 type AuthContextValue = {
   ready: boolean;
   isSignedIn: boolean;
+  userId: string | null;
   userEmail: string | null;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string) => Promise<SignUpResult>;
@@ -76,7 +77,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }
 
   return (
-    <AuthContext.Provider value={{ ready, isSignedIn: Boolean(session), userEmail: session?.user.email ?? null, signIn, signUp, verifySignupOtp, resendSignupOtp, signOut }}>
+    <AuthContext.Provider value={{ ready, isSignedIn: Boolean(session), userId: session?.user.id ?? null, userEmail: session?.user.email ?? null, signIn, signUp, verifySignupOtp, resendSignupOtp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

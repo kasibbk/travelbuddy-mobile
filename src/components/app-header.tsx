@@ -1,8 +1,12 @@
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { Bike, Bell, MapPin, Plus } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Avatar } from "./avatar";
 import { colors } from "./theme";
+import { useAuth } from "./auth-provider";
+import { loadProfile, ProfileData } from "../lib/app-data";
 
 type AppHeaderProps = {
   eyebrow: string;
@@ -13,6 +17,19 @@ type AppHeaderProps = {
 
 export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps) {
   const router = useRouter();
+  const { ready, userId, userEmail } = useAuth();
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+
+  useFocusEffect(useCallback(() => {
+    if (!ready || !userId) { setProfile(null); return; }
+    let active = true;
+    loadProfile(userId).then((row) => { if (active) setProfile(row); }).catch(() => { if (active) setProfile(null); });
+    return () => { active = false; };
+  }, [ready, userId]));
+
+  const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()
+    || userEmail?.slice(0, 2).toUpperCase()
+    || "R";
 
   return (
     <View style={styles.wrapper}>
@@ -24,11 +41,11 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
         <View style={styles.topActions}>
           {onCreate && <Pressable accessibilityLabel="Create a ride" onPress={onCreate} style={styles.createIcon}><Plus color={colors.surface} size={19} /></Pressable>}
           <Pressable accessibilityLabel="Notifications" style={styles.iconButton}><Bell color={colors.ink} size={18} /><View style={styles.notificationDot} /></Pressable>
-          <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials="JD" size={36} /></Pressable>
+          <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} size={36} /></Pressable>
         </View>
       </View>
       <View style={styles.titleBlock}>
-        <View style={styles.eyebrowRow}><Text style={styles.eyebrow}>{eyebrow}</Text><View style={styles.location}><MapPin color={colors.orange} size={12} /><Text style={styles.locationText}>SAN FRANCISCO</Text></View></View>
+        <View style={styles.eyebrowRow}><Text style={styles.eyebrow}>{eyebrow}</Text><View style={styles.location}><MapPin color={colors.orange} size={12} /><Text style={styles.locationText}>{profile?.homeCity?.toUpperCase() ?? "LOCATION NOT SET"}</Text></View></View>
         <Text style={styles.title}>{title}</Text>
         {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
       </View>

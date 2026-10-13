@@ -22,7 +22,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "TravelBuddy uses your location to suggest nearby riders. Your exact coordinates are never shown to other riders."
+        }
+      ]
     ]
   }
 }

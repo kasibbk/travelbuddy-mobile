@@ -1,54 +1,93 @@
 import { useState } from "react";
-import { CalendarDays, Check, MapPin, ShieldCheck, X } from "lucide-react-native";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
+import { useAuth } from "./auth-provider";
+import { createRide, RideCardData } from "../lib/app-data";
 import { colors } from "./theme";
 
-type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: () => void };
+type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: (ride: RideCardData) => void };
 
 export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModalProps) {
+  const { userId } = useAuth();
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [start, setStart] = useState("");
   const [destination, setDestination] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [coAdmin, setCoAdmin] = useState(false);
-  const [created, setCreated] = useState(false);
+  const [capacity, setCapacity] = useState("6");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  function createRide() {
-    if (!title.trim() || !start.trim() || !destination.trim() || !date.trim() || !time.trim()) return;
-    setCreated(true);
-  }
+  async function submitRide() {
+    setError("");
+    if (!userId) { setError("Sign in before creating a ride."); return; }
+    if (title.trim().length < 3 || title.trim().length > 100) { setError("Ride name must be between 3 and 100 characters."); return; }
+    if (start.trim().length < 2 || destination.trim().length < 2) { setError("Add a starting point and destination."); return; }
+    if (description.trim().length > 2000) { setError("Description must be 2,000 characters or fewer."); return; }
+    const capacityNumber = Number(capacity);
+    if (!Number.isInteger(capacityNumber) || capacityNumber < 2 || capacityNumber > 100) { setError("Rider limit must be a whole number from 2 to 100."); return; }
 
-  function finish() {
-    setCreated(false);
-    setTitle("");
-    setStart("");
-    setDestination("");
-    setDate("");
-    setTime("");
-    onCreated();
-    onClose();
+    const dateParts = date.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const timeParts = time.trim().match(/^(\d{2}):(\d{2})$/);
+    if (!dateParts || !timeParts || Number(timeParts[1]) > 23 || Number(timeParts[2]) > 59) {
+      setError("Enter the date as YYYY-MM-DD and time as 24-hour HH:MM.");
+      return;
+    }
+    const startsAt = new Date(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3]), Number(timeParts[1]), Number(timeParts[2]));
+    if (startsAt.getFullYear() !== Number(dateParts[1]) || startsAt.getMonth() !== Number(dateParts[2]) - 1 || startsAt.getDate() !== Number(dateParts[3]) || startsAt.getHours() !== Number(timeParts[1]) || startsAt.getMinutes() !== Number(timeParts[2])) {
+      setError("Enter a valid date and time.");
+      return;
+    }
+    if (startsAt.getTime() <= Date.now()) { setError("Choose a future date and time."); return; }
+
+    setSubmitting(true);
+    try {
+      const ride = await createRide({
+        creatorId: userId,
+        title: title.trim(),
+        description: description.trim(),
+        startLabel: start.trim(),
+        destinationLabel: destination.trim(),
+        startsAt: startsAt.toISOString(),
+        capacity: capacityNumber,
+      });
+      onCreated(ride);
+      setTitle("");
+      setDescription("");
+      setStart("");
+      setDestination("");
+      setDate("");
+      setTime("");
+      setCapacity("6");
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the ride.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        {created ? <View style={styles.success}><View style={styles.successMark}><Check color={colors.forest} size={22} /></View><Text style={styles.successTitle}>Your ride is on the map.</Text><Text style={styles.successText}>Nearby riders can request a spot. You and your co-admin decide who joins.</Text><Pressable style={styles.primaryButton} onPress={finish}><Text style={styles.primaryText}>Sounds good</Text></Pressable></View> : <View style={styles.sheet}>
+        <View style={styles.sheet}>
           <View style={styles.sheetHandle} />
-          <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>MAKE ROOM FOR ADVENTURE</Text><Text style={styles.heading}>Plan a new ride</Text></View><Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
+          <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>MAKE ROOM FOR ADVENTURE</Text><Text style={styles.heading}>Plan a new ride</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
-            <Field label="Ride name" value={title} onChangeText={setTitle} placeholder="Saturday coast loop" />
+            <Field label="Ride name" value={title} onChangeText={setTitle} placeholder="Name this ride" maxLength={100} />
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
-            <Field label="Starting point" value={start} onChangeText={setStart} placeholder="Where to meet" />
-            <Field label="Destination" value={destination} onChangeText={setDestination} placeholder="Where we're headed" />
-            <Field label="Stops along the way · optional" placeholder="Coffee stop or viewpoint" />
+            <Field label="Starting point" value={start} onChangeText={setStart} placeholder="Where to meet" maxLength={160} />
+            <Field label="Destination" value={destination} onChangeText={setDestination} placeholder="Where you're headed" maxLength={160} />
+            <Field label="Description · optional" value={description} onChangeText={setDescription} placeholder="A few details for riders" multiline maxLength={2000} />
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
-            <View style={styles.split}><Field style={styles.half} label="Date" value={date} onChangeText={setDate} placeholder="Oct 24, 2026" /><Field style={styles.half} label="Meet-up time" value={time} onChangeText={setTime} placeholder="8:30 AM" /></View>
-            <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>{coAdmin ? "Jamie + Maya Chen approve requests" : "You approve all join requests"}</Text></View><Pressable onPress={() => setCoAdmin(!coAdmin)} style={styles.coAdminButton}><Text style={styles.coAdminText}>{coAdmin ? "Remove" : "+ Co-admin"}</Text></Pressable></View>
-            <Text style={styles.helperText}>Only you and designated ride admins can approve who joins.</Text>
-            <Pressable style={styles.primaryButton} onPress={createRide}><Text style={styles.primaryText}>Create ride</Text></Pressable>
+            <View style={styles.split}><Field style={styles.half} label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" /><Field style={styles.half} label="Meet-up time" value={time} onChangeText={setTime} placeholder="HH:MM" autoCapitalize="none" /></View>
+            <Field label="Rider limit" value={capacity} onChangeText={(value) => setCapacity(value.replace(/\D/g, "").slice(0, 3))} keyboardType="number-pad" maxLength={3} />
+            <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>You’ll be assigned as the ride owner.</Text></View></View>
+            {!!error && <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>}
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.primaryButton, submitting && styles.submittingButton]} onPress={submitRide}>{submitting ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>Create ride</Text>}</Pressable>
           </ScrollView>
-        </View>}
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -78,13 +117,8 @@ const styles = StyleSheet.create({
   adminCopy: { flex: 1, gap: 3 },
   adminTitle: { color: colors.ink, fontSize: 10, fontWeight: "700" },
   adminText: { color: colors.muted, fontSize: 8 },
-  coAdminButton: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 6, backgroundColor: colors.surface },
-  coAdminText: { color: colors.forest, fontSize: 8, fontWeight: "700" },
-  helperText: { color: colors.muted, fontSize: 9, lineHeight: 14 },
+  errorText: { color: "#9B493C", fontSize: 9, lineHeight: 14 },
   primaryButton: { minHeight: 45, marginTop: 3, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
+  submittingButton: { opacity: 0.7 },
   primaryText: { color: colors.surface, fontSize: 11, fontWeight: "700" },
-  success: { marginHorizontal: 20, marginBottom: 30, padding: 25, alignItems: "center", borderRadius: 18, backgroundColor: colors.paper },
-  successMark: { width: 48, height: 48, marginBottom: 13, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen },
-  successTitle: { color: colors.ink, fontFamily: "Georgia", fontSize: 23, fontWeight: "500" },
-  successText: { marginTop: 8, marginBottom: 18, color: colors.muted, fontSize: 10, lineHeight: 16, textAlign: "center" },
 });

@@ -1,45 +1,109 @@
-import { useState } from "react";
-import { ArrowRight, CalendarDays, MapPin, Navigation, Users } from "lucide-react-native";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import { MapPin, Navigation, Search, Users } from "lucide-react-native";
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppHeader } from "../../components/app-header";
 import { CreateRideModal } from "../../components/create-ride-modal";
+import { EmptyState } from "../../components/empty-state";
 import { PageShell } from "../../components/page-shell";
 import { RideCard } from "../../components/ride-card";
-import { RouteMap } from "../../components/route-map";
 import { colors } from "../../components/theme";
-import { nearbyRiders, rides } from "../../lib/demo-data";
+import { useAuth } from "../../components/auth-provider";
+import { cancelRideRequest, loadNearbyRiders, loadOpenRides, loadUserRideRequests, NearbyRiderData, requestRide, RideCardData, RideRequestData } from "../../lib/app-data";
 
 export default function DiscoverScreen() {
-  const [createVisible, setCreateVisible] = useState(false);
-  const [requested, setRequested] = useState<string[]>([]);
-  const [inviteSent, setInviteSent] = useState<string[]>([]);
-  const [rideFilter, setRideFilter] = useState("For you");
-  const visibleRides = rides.filter((ride) => rideFilter === "Under 40 mi" ? Number.parseInt(ride.distance) < 40 : rideFilter === "Easy pace" ? ride.id !== "redwoods" : true).slice(0, 2);
+  const { ready, userId } = useAuth();
+  const [search, setSearch] = useState("");
+  const [rides, setRides] = useState<RideCardData[]>([]);
+  const [requestsByRide, setRequestsByRide] = useState<Record<string, RideRequestData>>({});
+  const [busyRideIds, setBusyRideIds] = useState<Record<string, boolean>>({});
+  const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [requestLoadError, setRequestLoadError] = useState("");
+  const [nearbyRiders, setNearbyRiders] = useState<NearbyRiderData[]>([]);
+  const [ridesLoading, setRidesLoading] = useState(true);
+  const [nearbyLoading, setNearbyLoading] = useState(true);
+  const [ridesError, setRidesError] = useState("");
+  const [nearbyError, setNearbyError] = useState("");
+  const [createRideVisible, setCreateRideVisible] = useState(false);
 
-  function requestRide(id: string) {
-    setRequested((current) => current.includes(id) ? current : [...current, id]);
+  useEffect(() => {
+    if (!ready) return;
+    let active = true;
+    setRidesLoading(true);
+    setRidesError("");
+    loadOpenRides().then((rows) => { if (active) setRides(rows); })
+      .catch((cause: unknown) => { if (active) setRidesError(cause instanceof Error ? cause.message : "Could not load rides."); })
+      .finally(() => { if (active) setRidesLoading(false); });
+    return () => { active = false; };
+  }, [ready, userId]);
+
+  useFocusEffect(useCallback(() => {
+    if (!ready) return;
+    let active = true;
+    setNearbyLoading(true);
+    setNearbyError("");
+    loadNearbyRiders()
+      .then((rows) => { if (active) setNearbyRiders(rows); })
+      .catch((cause: unknown) => { if (active) setNearbyError(cause instanceof Error ? cause.message : "Could not load nearby riders."); })
+      .finally(() => { if (active) setNearbyLoading(false); });
+    return () => { active = false; };
+  }, [ready]));
+
+  useFocusEffect(useCallback(() => {
+    if (!ready) return;
+    if (!userId) {
+      setRequestsByRide({});
+      setRequestsLoading(false);
+      setRequestLoadError("");
+      return;
+    }
+    let active = true;
+    setRequestsLoading(true);
+    setRequestLoadError("");
+    loadUserRideRequests(userId)
+      .then((requests) => {
+        if (!active) return;
+        const latestByRide: Record<string, RideRequestData> = {};
+        for (const request of requests) if (!latestByRide[request.rideId]) latestByRide[request.rideId] = request;
+        setRequestsByRide(latestByRide);
+      })
+      .catch((cause: unknown) => { if (active) setRequestLoadError(cause instanceof Error ? cause.message : "Could not load your ride request status."); })
+      .finally(() => { if (active) setRequestsLoading(false); });
+    return () => { active = false; };
+  }, [ready, userId]));
+
+  async function handleRideRequest(ride: RideCardData) {
+    if (!userId || busyRideIds[ride.id]) return;
+    setBusyRideIds((current) => ({ ...current, [ride.id]: true }));
+    setRequestErrors((current) => ({ ...current, [ride.id]: "" }));
+    try {
+      const currentRequest = requestsByRide[ride.id];
+      if (currentRequest?.status === "pending") {
+        await cancelRideRequest(currentRequest.id);
+        setRequestsByRide((current) => ({ ...current, [ride.id]: { ...current[ride.id], status: "cancelled" } }));
+      } else {
+        const createdRequest = await requestRide(ride.id, userId);
+        setRequestsByRide((current) => ({ ...current, [ride.id]: createdRequest }));
+      }
+    } catch (cause) {
+      setRequestErrors((current) => ({ ...current, [ride.id]: cause instanceof Error ? cause.message : "Could not update your ride request." }));
+    } finally {
+      setBusyRideIds((current) => ({ ...current, [ride.id]: false }));
+    }
   }
 
+  const visibleRides = useMemo(() => rides.filter((ride) => `${ride.title} ${ride.route} ${ride.host}`.toLowerCase().includes(search.toLowerCase())), [rides, search]);
+
   return <PageShell>
-    <AppHeader eyebrow="MONDAY, OCTOBER 12" title="Good morning, Jamie." subtitle="A little fresh air looks good on your calendar." onCreate={() => setCreateVisible(true)} />
-    <View style={styles.feature}>
-      <View style={styles.featureTop}><View style={styles.liveLabel}><View style={styles.liveDot} /><Text style={styles.featureEyebrow}>YOUR NEXT GOOD DAY OUT</Text></View><Text style={styles.featureIndex}>01 / 08</Text></View>
-      <Text style={styles.featureTitle}>The coast is{ "\n" }calling.</Text>
-      <Text style={styles.featureDescription}>Take the long way with a good crew, then be back for lunch.</Text>
-      <RouteMap />
-      <View style={styles.featureMeta}><View style={styles.metaItem}><CalendarDays color={colors.lime} size={14} /><Text style={styles.metaText}>SAT, OCT 17 · 8:30 AM</Text></View><View style={styles.metaItem}><MapPin color={colors.lime} size={14} /><Text style={styles.metaText}>SAN FRANCISCO → HALF MOON BAY</Text></View></View>
-      <Pressable style={styles.featureButton} onPress={() => requestRide("coastline")}><Text style={styles.featureButtonText}>{requested.includes("coastline") ? "Request sent" : "Join this ride"}</Text><ArrowRight color={colors.ink} size={16} /></Pressable>
-      <Text style={styles.distanceNote}>34 MILES · ABOUT 2 HOURS</Text>
+    <AppHeader eyebrow="YOUR RIDE BOARD" title="Find your next ride." subtitle="Open rides from TravelBuddy riders." onCreate={() => setCreateRideVisible(true)} />
+    <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>OPEN RIDES</Text><Text style={styles.sectionTitle}>Rides on the board</Text></View><Text style={styles.count}>{rides.length}</Text></View>
+    <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={search} onChangeText={setSearch} placeholder="Search rides or routes" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>
+    {ridesLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : ridesError ? <EmptyState icon={MapPin} title="Rides couldn’t load" description={ridesError} /> : visibleRides.length ? <View style={styles.rideList}>{visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} viewerIsOwner={ride.creatorId === userId} requestState={requestsByRide[ride.id]} actionPending={Boolean(busyRideIds[ride.id])} actionDisabled={requestsLoading || !!requestLoadError} actionError={requestErrors[ride.id] || requestLoadError} onRequestSpot={() => handleRideRequest(ride)} onCancelRequest={() => handleRideRequest(ride)} />)}</View> : <EmptyState icon={MapPin} title={search ? "No matching rides" : "No open rides yet"} description={search ? "Try another route or clear your search." : "When riders publish open trips, they’ll appear here."} />}
+    <View style={styles.nearbySection}><View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>LOCATION-BASED SUGGESTIONS</Text><Text style={styles.sectionTitle}>Riders nearby</Text></View><Navigation color={colors.leaf} size={18} /></View>
+      {nearbyLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : nearbyError ? <EmptyState icon={Users} title="Nearby riders couldn’t load" description={nearbyError} /> : nearbyRiders.length ? <View style={styles.peopleList}>{nearbyRiders.map((person) => <View style={styles.personRow} key={person.id}><View style={styles.personAvatar}><Text style={styles.personInitials}>{person.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</Text></View><View style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{person.city ?? "Nearby rider"} · {person.distanceKm.toFixed(1)} km</Text></View></View>)}</View> : <EmptyState icon={Users} title="No nearby riders to show" description="Suggestions appear when you share an approximate location and opted-in riders are in range." />}
     </View>
-
-    <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>GOOD RIDES, GOOD COMPANY</Text><Text style={styles.sectionTitle}>Rides near you <Text style={styles.count}>08</Text></Text></View><Text style={styles.seeAllText}>3 rides · Sat &amp; Sun</Text></View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>{["For you", "Easy pace", "Under 40 mi"].map((filter) => <Pressable accessibilityRole="button" accessibilityState={{ selected: rideFilter === filter }} key={filter} onPress={() => setRideFilter(filter)} style={[styles.filter, rideFilter === filter && styles.activeFilter]}><Text style={[styles.filterText, rideFilter === filter && styles.activeFilterText]}>{filter}</Text></Pressable>)}</ScrollView>
-    <View style={styles.rideList}>{visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} requested={requested.includes(ride.id)} onJoin={() => requestRide(ride.id)} />)}</View>
-
-    <View style={styles.nearbySection}><View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>A LITTLE CLOSER TO HOME</Text><Text style={styles.sectionTitle}>Riders nearby</Text></View><Navigation color={colors.leaf} size={18} /></View><Text style={styles.nearbyDescription}>People around Pacific Heights who share your routes.</Text>{nearbyRiders.slice(0, 3).map((person) => <View style={styles.personRow} key={person.id}><View style={[styles.personAvatar, { backgroundColor: person.color }]}><Text style={styles.personInitials}>{person.initials}</Text></View><View style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{person.distance} away · {person.mutual}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={`${inviteSent.includes(person.id) ? "Request sent to" : "Add"} ${person.name}`} style={[styles.addButton, inviteSent.includes(person.id) && styles.addedButton]} onPress={() => setInviteSent((current) => current.includes(person.id) ? current : [...current, person.id])}><Text style={styles.addButtonText}>{inviteSent.includes(person.id) ? "✓" : "+"}</Text></Pressable></View>)}
-      <View style={styles.mutualNote}><Users color={colors.leaf} size={14} /><Text style={styles.mutualText}>Make the next ride a little less “nice to meet you.”</Text></View>
-    </View>
-    <CreateRideModal visible={createVisible} onClose={() => setCreateVisible(false)} onCreated={() => {}} />
+    <CreateRideModal visible={createRideVisible} onClose={() => setCreateRideVisible(false)} onCreated={(ride) => setRides((current) => [ride, ...current.filter((item) => item.id !== ride.id)].sort((left, right) => left.startsAt.localeCompare(right.startsAt)))} />
   </PageShell>;
 }
 
@@ -58,6 +122,10 @@ const styles = StyleSheet.create({
   featureButton: { minHeight: 39, marginTop: 14, paddingHorizontal: 12, borderRadius: 8, backgroundColor: "#E7F1C7", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   featureButtonText: { color: colors.ink, fontSize: 10, fontWeight: "800" },
   distanceNote: { marginTop: 10, color: "#AEC5B2", fontSize: 7, fontWeight: "700", letterSpacing: 0.8, textAlign: "center" },
+  search: { height: 39, marginHorizontal: 16, marginBottom: 18, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 8 },
+  searchInput: { flex: 1, color: colors.ink, fontSize: 10 },
+  loader: { marginVertical: 22 },
+  peopleList: { marginHorizontal: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface },
   sectionHeading: { marginTop: 25, marginBottom: 11, paddingHorizontal: 20, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
   eyebrow: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1 },
   sectionTitle: { marginTop: 5, color: colors.ink, fontFamily: "Georgia", fontSize: 22, fontWeight: "500" },
