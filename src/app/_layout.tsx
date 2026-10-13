@@ -24,9 +24,11 @@ function RouteGuard() {
   const { isSignedIn } = useAuth();
 
   useEffect(() => {
-    const isPublicRoute = pathname === "/" || pathname === "/login" || pathname === "/register";
+    const isAuthRoute = pathname === "/login" || pathname === "/register";
+    const isPublicRoute = pathname === "/" || isAuthRoute;
     if (!isSignedIn && !isPublicRoute) router.replace("/");
-    if (isSignedIn && isPublicRoute) router.replace("/(tabs)/discover");
+    if (isSignedIn && pathname === "/account") router.replace("/account/settings");
+    if (isSignedIn && isAuthRoute) router.replace("/(tabs)/discover");
   }, [isSignedIn, pathname, router]);
 
   return (
@@ -37,6 +39,7 @@ function RouteGuard() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="profile/index" options={{ presentation: "modal" }} />
       <Stack.Screen name="account/index" options={{ presentation: "modal" }} />
+      <Stack.Screen name="account/settings" options={{ presentation: "modal" }} />
     </Stack>
   );
 }

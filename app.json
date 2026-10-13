@@ -2,7 +2,6 @@
   "expo": {
     "name": "travelbuddy-mobile",
     "slug": "travelbuddy-mobile",
-    "scheme": "travelbuddy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
