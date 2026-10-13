@@ -1,0 +1,38 @@
+import { useState } from "react";
+import { ArrowLeft, Bike, ChevronRight, MapPin, ShieldCheck } from "lucide-react-native";
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
+import { Avatar } from "../../components/avatar";
+import { PageShell } from "../../components/page-shell";
+import { colors } from "../../components/theme";
+
+export default function ProfileScreen() {
+  const router = useRouter();
+  const [nearbyVisible, setNearbyVisible] = useState(true);
+  const [rideInvites, setRideInvites] = useState(true);
+  const [saved, setSaved] = useState(false);
+  return <PageShell><View style={styles.topbar}><Pressable onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><View style={styles.brandMark}><Bike color={colors.lime} size={17} /></View><Text style={styles.topTitle}>Your profile</Text><View style={{ flex: 1 }} /></View>
+    <View style={styles.heading}><Text style={styles.eyebrow}>YOUR CORNER OF THE MAP</Text><Text style={styles.title}>Your profile</Text><Text style={styles.subtitle}>A little about you makes a good ride feel closer.</Text></View>
+    <View style={styles.profileCard}><View style={styles.identity}><Avatar initials="JD" size={55} /><View style={styles.identityText}><Text style={styles.name}>Jamie Davis</Text><Text style={styles.member}>Rider since October 2026</Text></View><Pressable style={styles.editPhoto}><Text style={styles.editPhotoText}>EDIT</Text></Pressable></View>
+      <Label text="YOUR NAME" /><TextInput style={styles.input} defaultValue="Jamie Davis" />
+      <Label text="EMAIL ADDRESS" /><TextInput style={styles.input} defaultValue="jamie@example.com" keyboardType="email-address" autoCapitalize="none" />
+      <Label text="HOME CITY" /><View style={styles.inputWithIcon}><MapPin color={colors.orange} size={14} /><TextInput style={styles.cityInput} defaultValue="San Francisco, CA" /></View>
+      <Label text="YOUR RIDING VIBE" /><View style={styles.vibeRow}>{["Easygoing", "Social pace", "Steady miles"].map((vibe, index) => <View style={[styles.vibe, index === 1 && styles.vibeSelected]} key={vibe}><Text style={[styles.vibeText, index === 1 && styles.vibeTextSelected]}>{vibe}</Text></View>)}</View>
+      <Pressable style={[styles.saveButton, saved && styles.savedButton]} onPress={() => { setSaved(true); setTimeout(() => setSaved(false), 2200); }}><Text style={styles.saveText}>{saved ? "Saved" : "Save changes"}</Text></Pressable>
+    </View>
+    <View style={styles.privacyCard}><View style={styles.privacyHeading}><View><Text style={styles.cardTitle}>Privacy & discovery</Text><Text style={styles.cardSubtitle}>You decide how riders find you.</Text></View><ShieldCheck color={colors.leaf} size={19} /></View><SettingRow title="Nearby suggestions" detail="Appear to riders around you" value={nearbyVisible} onChange={setNearbyVisible} /><SettingRow title="Ride invitations" detail="Let friends invite you" value={rideInvites} onChange={setRideInvites} /></View>
+    <Pressable style={styles.accountLink} onPress={() => router.push("/account")}><View><Text style={styles.accountTitle}>Account & sign-in</Text><Text style={styles.accountSubtitle}>jamie@example.com · verified</Text></View><ChevronRight color={colors.muted} size={18} /></Pressable>
+  </PageShell>;
+}
+
+function Label({ text }: { text: string }) { return <Text style={styles.label}>{text}</Text>; }
+function SettingRow({ title, detail, value, onChange }: { title: string; detail: string; value: boolean; onChange: (value: boolean) => void }) { return <View style={styles.setting}><View style={styles.settingCopy}><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingDetail}>{detail}</Text></View><Switch value={value} onValueChange={onChange} trackColor={{ false: "#D6DDD3", true: colors.leaf }} thumbColor={colors.surface} /> </View>; }
+
+const styles = StyleSheet.create({
+  topbar: { height: 48, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 9 }, back: { width: 26, height: 36, alignItems: "flex-start", justifyContent: "center" }, brandMark: { width: 27, height: 27, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, topTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" },
+  heading: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 15 }, eyebrow: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1 }, title: { marginTop: 6, color: colors.ink, fontFamily: "Georgia", fontSize: 29, fontWeight: "500" }, subtitle: { marginTop: 4, color: colors.muted, fontSize: 10 },
+  profileCard: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, identity: { marginBottom: 15, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11 }, identityText: { flex: 1, gap: 4 }, name: { color: colors.ink, fontFamily: "Georgia", fontSize: 19 }, member: { color: colors.muted, fontSize: 8 }, editPhoto: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 6, backgroundColor: "#EEF1E9" }, editPhotoText: { color: colors.leaf, fontSize: 7, fontWeight: "800" },
+  label: { marginTop: 11, marginBottom: 5, color: colors.muted, fontSize: 7, fontWeight: "800", letterSpacing: 0.6 }, input: { height: 39, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", color: colors.ink, fontSize: 10 }, inputWithIcon: { height: 39, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", flexDirection: "row", alignItems: "center", gap: 7 }, cityInput: { flex: 1, color: colors.ink, fontSize: 10 }, vibeRow: { flexDirection: "row", gap: 6 }, vibe: { flex: 1, minHeight: 30, borderWidth: 1, borderColor: colors.line, borderRadius: 6, alignItems: "center", justifyContent: "center" }, vibeSelected: { borderColor: "#CFDDC7", backgroundColor: colors.paleGreen }, vibeText: { color: colors.muted, fontSize: 7 }, vibeTextSelected: { color: colors.forest, fontWeight: "700" }, saveButton: { height: 39, marginTop: 15, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, savedButton: { backgroundColor: colors.leaf }, saveText: { color: colors.surface, fontSize: 10, fontWeight: "700" },
+  privacyCard: { marginHorizontal: 16, marginTop: 13, paddingHorizontal: 14, paddingTop: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, privacyHeading: { marginBottom: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, cardTitle: { color: colors.ink, fontSize: 12, fontWeight: "700" }, cardSubtitle: { marginTop: 3, color: colors.muted, fontSize: 8 }, setting: { minHeight: 52, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, settingCopy: { flex: 1, gap: 3 }, settingTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, settingDetail: { color: colors.muted, fontSize: 7 },
+  accountLink: { minHeight: 59, marginHorizontal: 16, marginTop: 13, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, accountTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, accountSubtitle: { marginTop: 4, color: colors.muted, fontSize: 8 },
+});
