@@ -62,7 +62,6 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1 },
   sectionTitle: { marginTop: 5, color: colors.ink, fontFamily: "Georgia", fontSize: 22, fontWeight: "500" },
   count: { color: colors.subtle, fontFamily: "System", fontSize: 9 },
-  seeAll: { paddingBottom: 2 },
   seeAllText: { color: colors.leaf, fontSize: 8, fontWeight: "700" },
   filterRow: { gap: 7, paddingHorizontal: 20, paddingBottom: 13 },
   activeFilter: { borderColor: colors.forest, backgroundColor: colors.forest },

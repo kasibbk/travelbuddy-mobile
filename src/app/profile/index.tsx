@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { ArrowLeft, Bike, ChevronRight, MapPin, ShieldCheck } from "lucide-react-native";
+import { ArrowLeft, Bike, ChevronRight, LogOut, MapPin, ShieldCheck } from "lucide-react-native";
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Avatar } from "../../components/avatar";
 import { PageShell } from "../../components/page-shell";
 import { colors } from "../../components/theme";
+import { useAuth } from "../../components/auth-provider";
 
 export default function ProfileScreen() {
   const router = useRouter();
+    const { signOut } = useAuth();
   const [nearbyVisible, setNearbyVisible] = useState(true);
   const [rideInvites, setRideInvites] = useState(true);
   const [saved, setSaved] = useState(false);
@@ -22,11 +24,12 @@ export default function ProfileScreen() {
     </View>
     <View style={styles.privacyCard}><View style={styles.privacyHeading}><View><Text style={styles.cardTitle}>Privacy & discovery</Text><Text style={styles.cardSubtitle}>You decide how riders find you.</Text></View><ShieldCheck color={colors.leaf} size={19} /></View><SettingRow title="Nearby suggestions" detail="Appear to riders around you" value={nearbyVisible} onChange={setNearbyVisible} /><SettingRow title="Ride invitations" detail="Let friends invite you" value={rideInvites} onChange={setRideInvites} /></View>
     <Pressable style={styles.accountLink} onPress={() => router.push("/account")}><View><Text style={styles.accountTitle}>Account & sign-in</Text><Text style={styles.accountSubtitle}>jamie@example.com · verified</Text></View><ChevronRight color={colors.muted} size={18} /></Pressable>
+    <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOut}><LogOut color="#9B684F" size={15} /><Text style={styles.signOutText}>Sign out</Text></Pressable>
   </PageShell>;
 }
 
 function Label({ text }: { text: string }) { return <Text style={styles.label}>{text}</Text>; }
-function SettingRow({ title, detail, value, onChange }: { title: string; detail: string; value: boolean; onChange: (value: boolean) => void }) { return <View style={styles.setting}><View style={styles.settingCopy}><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingDetail}>{detail}</Text></View><Switch value={value} onValueChange={onChange} trackColor={{ false: "#D6DDD3", true: colors.leaf }} thumbColor={colors.surface} /> </View>; }
+function SettingRow({ title, detail, value, onChange }: { title: string; detail: string; value: boolean; onChange: (value: boolean) => void }) { return <View style={styles.setting}><View style={styles.settingCopy}><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingDetail}>{detail}</Text></View><Switch value={value} onValueChange={onChange} trackColor={{ false: "#D6DDD3", true: colors.leaf }} thumbColor={colors.surface} /></View>; }
 
 const styles = StyleSheet.create({
   topbar: { height: 48, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 9 }, back: { width: 26, height: 36, alignItems: "flex-start", justifyContent: "center" }, brandMark: { width: 27, height: 27, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, topTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" },
@@ -35,4 +38,5 @@ const styles = StyleSheet.create({
   label: { marginTop: 11, marginBottom: 5, color: colors.muted, fontSize: 7, fontWeight: "800", letterSpacing: 0.6 }, input: { height: 39, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", color: colors.ink, fontSize: 10 }, inputWithIcon: { height: 39, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", flexDirection: "row", alignItems: "center", gap: 7 }, cityInput: { flex: 1, color: colors.ink, fontSize: 10 }, vibeRow: { flexDirection: "row", gap: 6 }, vibe: { flex: 1, minHeight: 30, borderWidth: 1, borderColor: colors.line, borderRadius: 6, alignItems: "center", justifyContent: "center" }, vibeSelected: { borderColor: "#CFDDC7", backgroundColor: colors.paleGreen }, vibeText: { color: colors.muted, fontSize: 7 }, vibeTextSelected: { color: colors.forest, fontWeight: "700" }, saveButton: { height: 39, marginTop: 15, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, savedButton: { backgroundColor: colors.leaf }, saveText: { color: colors.surface, fontSize: 10, fontWeight: "700" },
   privacyCard: { marginHorizontal: 16, marginTop: 13, paddingHorizontal: 14, paddingTop: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, privacyHeading: { marginBottom: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, cardTitle: { color: colors.ink, fontSize: 12, fontWeight: "700" }, cardSubtitle: { marginTop: 3, color: colors.muted, fontSize: 8 }, setting: { minHeight: 52, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, settingCopy: { flex: 1, gap: 3 }, settingTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, settingDetail: { color: colors.muted, fontSize: 7 },
   accountLink: { minHeight: 59, marginHorizontal: 16, marginTop: 13, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, accountTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, accountSubtitle: { marginTop: 4, color: colors.muted, fontSize: 8 },
+  signOut: { minHeight: 42, marginHorizontal: 20, marginTop: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, signOutText: { color: "#9B684F", fontSize: 9, fontWeight: "700" },
 });
