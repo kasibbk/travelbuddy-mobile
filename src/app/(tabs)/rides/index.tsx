@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { CalendarDays, Check, ShieldCheck, UserPlus, X } from "lucide-react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppHeader } from "../../../components/app-header";
@@ -22,6 +22,7 @@ import {
 } from "../../../lib/app-data";
 
 export default function MyRidesScreen() {
+  const router = useRouter();
   const [tab, setTab] = useState("Upcoming");
   const { ready, userId } = useAuth();
   const [rides, setRides] = useState<RideCardData[]>([]);
@@ -63,8 +64,8 @@ export default function MyRidesScreen() {
   }, [ready, userId]));
 
   const now = Date.now();
-  const upcoming = useMemo(() => rides.filter((ride) => new Date(ride.startsAt).getTime() >= now), [rides, now]);
-  const past = useMemo(() => rides.filter((ride) => new Date(ride.startsAt).getTime() < now), [rides, now]);
+  const upcoming = useMemo(() => rides.filter((ride) => ride.status === "open" && new Date(ride.startsAt).getTime() >= now), [rides, now]);
+  const past = useMemo(() => rides.filter((ride) => ride.status !== "open" || new Date(ride.startsAt).getTime() < now), [rides, now]);
   const visibleRides = tab === "Past" ? past : upcoming;
   const ownedUpcomingRides = upcoming.filter((ride) => ride.creatorId === userId);
   const selectedAdminRide = rides.find((ride) => ride.id === adminRideId) ?? null;
@@ -137,7 +138,7 @@ export default function MyRidesScreen() {
         </View>;
       })}
     </View> : <EmptyState icon={ShieldCheck} title="No rides to manage" description="Upcoming rides you created will appear here for co-admin assignment." /> : visibleRides.length ? <View style={styles.rideList}>
-      {visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} />)}
+      {visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} />)}
     </View> : <EmptyState icon={CalendarDays} title={tab === "Past" ? "No past rides yet" : "No upcoming rides yet"} description="Rides you create, administer, or are approved to join will appear here." />}
 
     <AssignRideAdminModal visible={!!selectedAdminRide} ride={selectedAdminRide} friends={friends} admins={selectedAdminRide ? rideAdmins[selectedAdminRide.id] ?? [] : []} assignedBy={userId ?? ""} onClose={() => setAdminRideId("")} onAssigned={(friend) => selectedAdminRide && addAssignedFriend(selectedAdminRide.id, friend)} />

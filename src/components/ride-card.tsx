@@ -10,11 +10,12 @@ type RideCardProps = {
   actionPending?: boolean;
   actionDisabled?: boolean;
   actionError?: string;
+  onViewDetails?: () => void;
   onRequestSpot?: () => void;
   onCancelRequest?: () => void;
 };
 
-export function RideCard({ ride, requestState, viewerIsOwner = false, actionPending = false, actionDisabled = false, actionError = "", onRequestSpot, onCancelRequest }: RideCardProps) {
+export function RideCard({ ride, requestState, viewerIsOwner = false, actionPending = false, actionDisabled = false, actionError = "", onViewDetails, onRequestSpot, onCancelRequest }: RideCardProps) {
   return (
     <View style={styles.card}>
       <View style={styles.routePreview}><View style={styles.mapIcon}><Map color={colors.leaf} size={18} /></View><Text style={styles.distanceText}>{ride.distance}</Text></View>
@@ -26,6 +27,7 @@ export function RideCard({ ride, requestState, viewerIsOwner = false, actionPend
           <View style={styles.riders}><Users color={colors.muted} size={14} /><Text style={styles.riderText}>Up to {ride.capacity} riders</Text></View>
           <Text style={styles.hostText}>{ride.host}</Text>
         </View>
+        {onViewDetails && <Pressable accessibilityRole="button" onPress={onViewDetails} style={styles.detailsButton}><Text style={styles.detailsButtonText}>Ride details</Text></Pressable>}
         {viewerIsOwner ? <Text style={styles.ownerNote}>You host this ride</Text> : requestState?.status === "approved" ? <Text style={styles.approvedNote}>Your request is approved</Text> : onRequestSpot ? <Pressable accessibilityRole="button" accessibilityState={{ disabled: actionPending || actionDisabled }} disabled={actionPending || actionDisabled} onPress={requestState?.status === "pending" ? onCancelRequest : onRequestSpot} style={[styles.requestButton, requestState?.status === "pending" && styles.cancelButton, (actionPending || actionDisabled) && styles.pendingButton]}>{actionPending ? <ActivityIndicator size="small" color={requestState?.status === "pending" ? colors.forest : colors.surface} /> : <Text style={[styles.requestButtonText, requestState?.status === "pending" && styles.cancelButtonText]}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable> : null}
         {!!actionError && <Text accessibilityRole="alert" style={styles.actionError}>{actionError}</Text>}
       </View>
@@ -48,6 +50,8 @@ const styles = StyleSheet.create({
   riders: { flexDirection: "row", alignItems: "center", gap: 5 },
   riderText: { color: colors.muted, fontSize: 8, fontWeight: "600" },
   hostText: { color: colors.forest, fontSize: 8, fontWeight: "700" },
+  detailsButton: { minHeight: 34, marginTop: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  detailsButtonText: { color: colors.forest, fontSize: 9, fontWeight: "700" },
   ownerNote: { marginTop: 11, color: colors.muted, fontSize: 9, fontWeight: "700" },
   approvedNote: { marginTop: 11, color: colors.leaf, fontSize: 9, fontWeight: "700" },
   requestButton: { minHeight: 37, marginTop: 11, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },

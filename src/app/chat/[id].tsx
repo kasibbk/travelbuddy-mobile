@@ -71,7 +71,7 @@ export default function ChatScreen() {
   }
 
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-    <View style={styles.header}><Pressable accessibilityLabel="Back to messages" style={styles.back} onPress={() => router.back()}><ArrowLeft color={colors.ink} size={19} /></Pressable><Avatar initials={initials || "?"} color={colors.leaf} size={38} /><View style={styles.headerText}><Text numberOfLines={1} style={styles.name}>{title}</Text><Text style={styles.subline}>{conversation?.detail ?? "TravelBuddy conversation"}</Text></View><Pressable accessibilityLabel="Conversation options" style={styles.more}><MoreHorizontal color={colors.muted} size={20} /></Pressable></View>
+    <View style={styles.header}><Pressable accessibilityLabel="Back to messages" style={styles.back} onPress={() => router.back()}><ArrowLeft color={colors.ink} size={19} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Open details for ${title}`} disabled={!conversation} onPress={() => conversation && router.push({ pathname: "/chat-details/[id]", params: { id: conversation.id } })} style={styles.headerDetails}><Avatar initials={initials || "?"} color={colors.leaf} size={38} /><View style={styles.headerText}><Text numberOfLines={1} style={styles.name}>{title}</Text><Text style={styles.subline}>{conversation?.detail ?? "TravelBuddy conversation"}</Text></View></Pressable><Pressable accessibilityLabel="More options" disabled style={[styles.more, styles.moreDisabled]}><MoreHorizontal color={colors.muted} size={20} /></Pressable></View>
     <ScrollView style={styles.messages} contentContainerStyle={styles.messageContent}>
       {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error ? <EmptyState icon={MessageCircle} title="Conversation unavailable" description={error} /> : messages.length ? messages.map((message) => {
         const mine = message.senderId === userId;
@@ -86,10 +86,12 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.paper },
   header: { minHeight: 66, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 9 },
   back: { width: 28, height: 38, alignItems: "flex-start", justifyContent: "center" },
+  headerDetails: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 9 },
   headerText: { flex: 1, gap: 3 },
   name: { color: colors.ink, fontSize: 11, fontWeight: "700" },
   subline: { color: colors.muted, fontSize: 8 },
   more: { width: 30, height: 35, alignItems: "center", justifyContent: "center" },
+  moreDisabled: { opacity: 0.65 },
   messages: { flex: 1 },
   messageContent: { flexGrow: 1, gap: 13, padding: 16, paddingBottom: 24 },
   composer: { paddingHorizontal: 12, paddingTop: 9, paddingBottom: Platform.OS === "ios" ? 20 : 10, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.surface, flexDirection: "row", alignItems: "flex-end", gap: 8, flexWrap: "wrap" },

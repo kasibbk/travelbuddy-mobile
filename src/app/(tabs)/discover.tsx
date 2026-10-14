@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { MapPin, Navigation, Search, Users } from "lucide-react-native";
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppHeader } from "../../components/app-header";
@@ -12,6 +12,7 @@ import { useAuth } from "../../components/auth-provider";
 import { cancelRideRequest, loadNearbyRiders, loadOpenRides, loadUserRideRequests, NearbyRiderData, requestRide, RideCardData, RideRequestData } from "../../lib/app-data";
 
 export default function DiscoverScreen() {
+  const router = useRouter();
   const { ready, userId } = useAuth();
   const [search, setSearch] = useState("");
   const [rides, setRides] = useState<RideCardData[]>([]);
@@ -99,7 +100,7 @@ export default function DiscoverScreen() {
     <AppHeader eyebrow="YOUR RIDE BOARD" title="Find your next ride." subtitle="Open rides from TravelBuddy riders." onCreate={() => setCreateRideVisible(true)} />
     <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>OPEN RIDES</Text><Text style={styles.sectionTitle}>Rides on the board</Text></View><Text style={styles.count}>{rides.length}</Text></View>
     <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={search} onChangeText={setSearch} placeholder="Search rides or routes" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>
-    {ridesLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : ridesError ? <EmptyState icon={MapPin} title="Rides couldn’t load" description={ridesError} /> : visibleRides.length ? <View style={styles.rideList}>{visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} viewerIsOwner={ride.creatorId === userId} requestState={requestsByRide[ride.id]} actionPending={Boolean(busyRideIds[ride.id])} actionDisabled={requestsLoading || !!requestLoadError} actionError={requestErrors[ride.id] || requestLoadError} onRequestSpot={() => handleRideRequest(ride)} onCancelRequest={() => handleRideRequest(ride)} />)}</View> : <EmptyState icon={MapPin} title={search ? "No matching rides" : "No open rides yet"} description={search ? "Try another route or clear your search." : "When riders publish open trips, they’ll appear here."} />}
+    {ridesLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : ridesError ? <EmptyState icon={MapPin} title="Rides couldn’t load" description={ridesError} /> : visibleRides.length ? <View style={styles.rideList}>{visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} viewerIsOwner={ride.creatorId === userId} requestState={requestsByRide[ride.id]} actionPending={Boolean(busyRideIds[ride.id])} actionDisabled={requestsLoading || !!requestLoadError} actionError={requestErrors[ride.id] || requestLoadError} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} onRequestSpot={() => handleRideRequest(ride)} onCancelRequest={() => handleRideRequest(ride)} />)}</View> : <EmptyState icon={MapPin} title={search ? "No matching rides" : "No open rides yet"} description={search ? "Try another route or clear your search." : "When riders publish open trips, they’ll appear here."} />}
     <View style={styles.nearbySection}><View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>LOCATION-BASED SUGGESTIONS</Text><Text style={styles.sectionTitle}>Riders nearby</Text></View><Navigation color={colors.leaf} size={18} /></View>
       {nearbyLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : nearbyError ? <EmptyState icon={Users} title="Nearby riders couldn’t load" description={nearbyError} /> : nearbyRiders.length ? <View style={styles.peopleList}>{nearbyRiders.map((person) => <View style={styles.personRow} key={person.id}><View style={styles.personAvatar}><Text style={styles.personInitials}>{person.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</Text></View><View style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{person.city ?? "Nearby rider"} · {person.distanceKm.toFixed(1)} km</Text></View></View>)}</View> : <EmptyState icon={Users} title="No nearby riders to show" description="Suggestions appear when you share an approximate location and opted-in riders are in range." />}
     </View>

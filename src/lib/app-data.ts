@@ -28,6 +28,28 @@ export type RideCardData = {
   host: string;
   description: string;
   startsAt: string;
+  status: "open" | "cancelled" | "completed";
+};
+
+export type RideParticipantData = {
+  userId: string;
+  displayName: string;
+  avatarPath: string | null;
+  role: "owner" | "admin" | "member";
+};
+
+export type ConversationParticipantData = {
+  userId: string;
+  displayName: string;
+  avatarPath: string | null;
+  joinedAt: string;
+};
+
+export type SharedRideData = {
+  id: string;
+  title: string;
+  route: string;
+  startsAt: string;
 };
 
 export type AdminRequestData = {
@@ -72,6 +94,8 @@ export type FriendData = {
 export type ConversationData = {
   id: string;
   kind: "direct" | "ride";
+  rideId: string | null;
+  otherUserId: string | null;
   title: string;
   detail: string;
   lastMessage: string;
@@ -94,6 +118,8 @@ export type ProfileData = {
   discoverable: boolean;
 };
 
+export type PublicProfileData = Omit<ProfileData, "discoverable"> & { avatarPath: string | null };
+
 const rideSelect = "id, creator_id, title, description, start_label, destination_label, starts_at, distance_meters, estimated_duration_minutes, capacity, status, creator:profiles!rides_creator_id_fkey(display_name)";
 
 function mapRide(row: RideRow): RideCardData {
@@ -114,6 +140,7 @@ function mapRide(row: RideRow): RideCardData {
     host: row.creator?.display_name ?? "Ride host",
     description: row.description,
     startsAt: row.starts_at,
+    status: row.status,
   };
 }
 
@@ -221,32 +248,11 @@ export async function loadUserRides(userId: string): Promise<RideCardData[]> {
 }
 
 export async function loadPendingAdminRequests(userId: string): Promise<AdminRequestData[]> {
-  const { data: requests, error } = await supabase.from("ride_requests")
-    .select("id, ride_id, user_id, message, created_at")
-    .eq("status", "pending")
-    .neq("user_id", userId)
-    .order("created_at", { ascending: true });
+  const { data: adminRows, error } = await supabase.from("ride_admins").select("ride_id").eq("user_id", userId);
   if (error) throw error;
-  if (!requests?.length) return [];
-
-  const rideIds = [...new Set(requests.map((request) => request.ride_id))];
-  const userIds = [...new Set(requests.map((request) => request.user_id))];
-  const [ridesResult, profilesResult] = await Promise.all([
-    supabase.from("rides").select("id, title").in("id", rideIds),
-    supabase.from("profiles").select("id, display_name").in("id", userIds),
-  ]);
-  if (ridesResult.error) throw ridesResult.error;
-  if (profilesResult.error) throw profilesResult.error;
-  const rideTitles = new Map((ridesResult.data ?? []).map((ride) => [ride.id, ride.title]));
-  const names = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile.display_name]));
-  return requests.map((request) => ({
-    id: request.id,
-    rideId: request.ride_id,
-    rideTitle: rideTitles.get(request.ride_id) ?? "Ride",
-    riderName: names.get(request.user_id) ?? "Rider",
-    message: request.message,
-    createdAt: request.created_at,
-  }));
+  const rideIds = [...new Set((adminRows ?? []).map((row) => row.ride_id))];
+  const rideRequests = await Promise.all(rideIds.map((rideId) => loadRideRequests(rideId)));
+  return rideRequests.flat().sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 export async function loadNearbyRiders(): Promise<NearbyRiderData[]> {
@@ -322,11 +328,67 @@ export async function loadConversations(userId: string): Promise<ConversationDat
   return conversations.map((conversation) => ({
     id: conversation.id,
     kind: conversation.kind,
+    rideId: conversation.ride_id,
+    otherUserId: conversation.kind === "direct" ? (conversation.direct_user_low === userId ? conversation.direct_user_high : conversation.direct_user_low) : null,
     title: conversation.kind === "ride" && conversation.ride_id ? rideTitles.get(conversation.ride_id) ?? "Ride chat" : peerNames.get(conversation.direct_user_low === userId ? conversation.direct_user_high ?? "" : conversation.direct_user_low ?? "") ?? "Friend chat",
     detail: conversation.kind === "ride" ? "Ride group conversation" : "Direct conversation",
     lastMessage: latestMessages.get(conversation.id)?.body ?? "No messages yet",
     updatedAt: latestMessages.get(conversation.id)?.created_at ?? conversation.created_at,
   }));
+}
+
+export async function loadRideDetails(rideId: string): Promise<RideCardData | null> {
+  const { data, error } = await supabase.from("rides").select(rideSelect).eq("id", rideId).maybeSingle();
+  if (error) throw error;
+  return data ? mapRide(data as unknown as RideRow) : null;
+}
+
+export async function loadRideParticipants(rideId: string): Promise<RideParticipantData[]> {
+  const { data, error } = await supabase.rpc("ride_participants", { p_ride_id: rideId });
+  if (error) throw error;
+  return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; role: RideParticipantData["role"] }[])
+    .map((person) => ({ userId: person.user_id, displayName: person.display_name, avatarPath: person.avatar_path, role: person.role }));
+}
+
+export async function loadRideRequests(rideId: string): Promise<AdminRequestData[]> {
+  const [{ data: requests, error }, { data: ride, error: rideError }] = await Promise.all([
+    supabase.rpc("ride_requests_for_ride", { p_ride_id: rideId }),
+    supabase.from("rides").select("title").eq("id", rideId).maybeSingle(),
+  ]);
+  if (error) throw error;
+  if (rideError) throw rideError;
+  return ((requests ?? []) as { id: string; ride_id: string; user_id: string; rider_name: string; message: string; created_at: string }[]).map((request) => ({
+    id: request.id,
+    rideId: request.ride_id,
+    rideTitle: ride?.title ?? "Ride",
+    riderName: request.rider_name ?? "Rider",
+    message: request.message,
+    createdAt: request.created_at,
+  }));
+}
+
+export async function cancelRide(rideId: string): Promise<void> {
+  const { error } = await supabase.rpc("cancel_ride", { p_ride_id: rideId });
+  if (error) throw error;
+}
+
+export async function leaveRide(rideId: string): Promise<void> {
+  const { error } = await supabase.rpc("leave_ride", { p_ride_id: rideId });
+  if (error) throw error;
+}
+
+export async function loadConversationParticipants(conversationId: string): Promise<ConversationParticipantData[]> {
+  const { data, error } = await supabase.rpc("conversation_participants", { p_conversation_id: conversationId });
+  if (error) throw error;
+  return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; joined_at: string }[])
+    .map((person) => ({ userId: person.user_id, displayName: person.display_name, avatarPath: person.avatar_path, joinedAt: person.joined_at }));
+}
+
+export async function loadSharedActiveRides(otherUserId: string): Promise<SharedRideData[]> {
+  const { data, error } = await supabase.rpc("shared_active_rides", { p_other_user_id: otherUserId });
+  if (error) throw error;
+  return ((data ?? []) as { id: string; title: string; start_label: string; destination_label: string; starts_at: string }[])
+    .map((ride) => ({ id: ride.id, title: ride.title, route: `${ride.start_label} → ${ride.destination_label}`, startsAt: ride.starts_at }));
 }
 
 export async function loadMessages(conversationId: string): Promise<MessageData[]> {
@@ -354,6 +416,20 @@ export async function loadProfile(userId: string): Promise<ProfileData | null> {
     .maybeSingle();
   if (error) throw error;
   return data ? { id: data.id, displayName: data.display_name, homeCity: data.home_city, bio: data.bio, ridingPace: data.riding_pace, discoverable: data.discoverable } : null;
+}
+
+export async function loadPublicProfile(userId: string): Promise<PublicProfileData | null> {
+  const { data, error } = await supabase.rpc("public_profile", { p_user_id: userId });
+  if (error) throw error;
+  const profile = ((data ?? []) as { id: string; display_name: string; avatar_path: string | null; home_city: string | null; bio: string; riding_pace: string }[])[0];
+  return profile ? {
+    id: profile.id,
+    displayName: profile.display_name,
+    avatarPath: profile.avatar_path,
+    homeCity: profile.home_city,
+    bio: profile.bio,
+    ridingPace: profile.riding_pace,
+  } : null;
 }
 
 export async function updateProfile(input: Omit<ProfileData, "id"> & { id: string }): Promise<ProfileData> {
