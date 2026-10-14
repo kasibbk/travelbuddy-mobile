@@ -1,11 +1,13 @@
 import { PropsWithChildren } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { colors } from "./theme";
 
-export function PageShell({ children }: PropsWithChildren) {
+type PageShellProps = PropsWithChildren<{ refreshing?: boolean; onRefresh?: () => void }>;
+
+export function PageShell({ children, refreshing = false, onRefresh }: PageShellProps) {
   return (
     <View style={styles.screen}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.leaf} colors={[colors.leaf]} /> : undefined} showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {children}
       </ScrollView>
     </View>

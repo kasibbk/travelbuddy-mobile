@@ -20,6 +20,7 @@ export default function FriendsScreen() {
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -91,7 +92,19 @@ export default function FriendsScreen() {
     }
   }
 
-  return <PageShell><AppHeader eyebrow="GOOD COMPANY TRAVELS" title="Find your people" subtitle="Meet nearby riders. Make your next ride a reunion." />
+  async function refreshData() {
+    if (!userId || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    const [nearbyResult, friendsResult] = await Promise.allSettled([loadNearbyRiders(), loadFriendRequests(userId)]);
+    if (nearbyResult.status === "fulfilled") setNearby(nearbyResult.value);
+    else setError(nearbyResult.reason instanceof Error ? nearbyResult.reason.message : "Could not refresh nearby riders.");
+    if (friendsResult.status === "fulfilled") setFriendRequests(friendsResult.value);
+    else setError(friendsResult.reason instanceof Error ? friendsResult.reason.message : "Could not refresh friend requests.");
+    setRefreshing(false);
+  }
+
+  return <PageShell refreshing={refreshing} onRefresh={refreshData}><AppHeader eyebrow="GOOD COMPANY TRAVELS" title="Find your people" subtitle="Meet nearby riders. Make your next ride a reunion." />
     <View style={styles.locationCard}><View style={styles.locationIcon}><MapPin color={colors.leaf} size={17} /></View><View style={styles.locationCopy}><Text style={styles.locationTitle}>Location-based discovery</Text><Text style={styles.locationSubtitle}>Only opted-in riders with a saved location appear.</Text></View></View>
     <View style={styles.tabs}>{(["Nearby", "Friends", "Requests"] as const).map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabActive]}><Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text></Pressable>)}</View>
     <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={query} onChangeText={setQuery} placeholder="Search riders nearby" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>

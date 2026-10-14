@@ -21,6 +21,7 @@ export default function ProfileScreen() {
   const [discoverable, setDiscoverable] = useState(false);
   const [hasLocation, setHasLocation] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [error, setError] = useState("");
@@ -108,8 +109,30 @@ export default function ProfileScreen() {
     }
   }
 
+  async function refreshProfile() {
+    if (!userId || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    try {
+      const [row, locationSaved] = await Promise.all([loadProfile(userId), hasSavedProfileLocation(userId)]);
+      setProfile(row);
+      setHasLocation(locationSaved);
+      if (row) {
+        setDisplayName(row.displayName);
+        setHomeCity(row.homeCity ?? "");
+        setBio(row.bio);
+        setRidingPace(row.ridingPace);
+        setDiscoverable(row.discoverable);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not refresh your profile.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() ?? "";
-  return <PageShell>
+  return <PageShell refreshing={refreshing} onRefresh={refreshProfile}>
     <View style={styles.topbar}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><View style={styles.brandMark}><Bike color={colors.lime} size={17} /></View><Text style={styles.topTitle}>Your profile</Text><View style={{ flex: 1 }} /></View>
     <View style={styles.heading}><Text style={styles.eyebrow}>YOUR CORNER OF THE MAP</Text><Text style={styles.title}>Your profile</Text><Text style={styles.subtitle}>Manage your details and nearby discovery.</Text></View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !profile ? <EmptyState icon={UserRound} title="Profile couldn’t load" description={error} /> : profile ? <>

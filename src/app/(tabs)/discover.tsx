@@ -27,6 +27,7 @@ export default function DiscoverScreen() {
   const [ridesError, setRidesError] = useState("");
   const [nearbyError, setNearbyError] = useState("");
   const [createRideVisible, setCreateRideVisible] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -94,9 +95,34 @@ export default function DiscoverScreen() {
     }
   }
 
+  async function refreshData() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRidesError("");
+    setNearbyError("");
+    setRequestLoadError("");
+    setRequestsLoading(true);
+    const [rideResult, nearbyResult, requestResult] = await Promise.allSettled([
+      loadOpenRides(),
+      loadNearbyRiders(),
+      userId ? loadUserRideRequests(userId) : Promise.resolve([] as RideRequestData[]),
+    ]);
+    if (rideResult.status === "fulfilled") setRides(rideResult.value);
+    else setRidesError(rideResult.reason instanceof Error ? rideResult.reason.message : "Could not refresh rides.");
+    if (nearbyResult.status === "fulfilled") setNearbyRiders(nearbyResult.value);
+    else setNearbyError(nearbyResult.reason instanceof Error ? nearbyResult.reason.message : "Could not refresh nearby riders.");
+    if (requestResult.status === "fulfilled") {
+      const latestByRide: Record<string, RideRequestData> = {};
+      for (const request of requestResult.value) if (!latestByRide[request.rideId]) latestByRide[request.rideId] = request;
+      setRequestsByRide(latestByRide);
+    } else setRequestLoadError(requestResult.reason instanceof Error ? requestResult.reason.message : "Could not refresh your request status.");
+    setRequestsLoading(false);
+    setRefreshing(false);
+  }
+
   const visibleRides = useMemo(() => rides.filter((ride) => `${ride.title} ${ride.route} ${ride.host}`.toLowerCase().includes(search.toLowerCase())), [rides, search]);
 
-  return <PageShell>
+  return <PageShell refreshing={refreshing} onRefresh={refreshData}>
     <AppHeader eyebrow="YOUR RIDE BOARD" title="Find your next ride." subtitle="Open rides from TravelBuddy riders." onCreate={() => setCreateRideVisible(true)} />
     <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>OPEN RIDES</Text><Text style={styles.sectionTitle}>Rides on the board</Text></View><Text style={styles.count}>{rides.length}</Text></View>
     <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={search} onChangeText={setSearch} placeholder="Search rides or routes" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>

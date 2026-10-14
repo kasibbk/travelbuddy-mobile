@@ -32,6 +32,7 @@ export default function MyRidesScreen() {
   const [adminRideId, setAdminRideId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<{ requestId: string; decision: "approved" | "declined" } | null>(null);
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
 
@@ -92,7 +93,26 @@ export default function MyRidesScreen() {
     }
   }
 
-  return <PageShell>
+  async function refreshData() {
+    if (!userId || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    try {
+      const [userRides, pendingRequests, friendRows] = await Promise.all([loadUserRides(userId), loadPendingAdminRequests(userId), loadFriendRequests(userId)]);
+      const ownedRideIds = userRides.filter((ride) => ride.creatorId === userId).map((ride) => ride.id);
+      const adminsByRide = await loadRideAdmins(ownedRideIds);
+      setRides(userRides);
+      setRequests(pendingRequests);
+      setFriends(friendRows);
+      setRideAdmins(adminsByRide);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not refresh your rides.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  return <PageShell refreshing={refreshing} onRefresh={refreshData}>
     <AppHeader eyebrow="YOUR ROUTES, YOUR CREW" title="My rides" subtitle="Everything you’re planning or taking the lead on." />
     <View style={styles.stats}>
       <Stat value={String(upcoming.length).padStart(2, "0")} label="UPCOMING" />

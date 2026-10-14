@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, CalendarDays, Check, MessageCircle, ShieldCheck, Users, X } from "lucide-react-native";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
@@ -47,6 +47,7 @@ export default function RideDetailsScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [canSeeMembers, setCanSeeMembers] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cancelDialog, setCancelDialog] = useState(false);
@@ -186,13 +187,51 @@ export default function RideDetailsScreen() {
     }
   }
 
+  async function refreshDetails() {
+    if (!userId || !id || Array.isArray(id) || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    try {
+      const [rideRow, ownRequests, adminRows, allFriendships, conversations] = await Promise.all([
+        loadRideDetails(id),
+        loadUserRideRequests(userId),
+        loadRideAdmins([id]),
+        loadFriendRequests(userId),
+        loadConversations(userId),
+      ]);
+      if (!rideRow) throw new Error("This ride is unavailable.");
+      const currentRequest = ownRequests.find((request) => request.rideId === id) ?? null;
+      const owned = rideRow.creatorId === userId;
+      const admin = !!adminRows[id]?.some((item) => item.userId === userId);
+      const maySeeMembers = owned || admin || currentRequest?.status === "approved";
+      const [rideRequests, rideParticipants] = await Promise.all([
+        owned || admin ? loadRideRequests(id) : Promise.resolve([] as AdminRequestData[]),
+        maySeeMembers ? loadRideParticipants(id) : Promise.resolve([] as RideParticipantData[]),
+      ]);
+      setRide(rideRow);
+      setRequestState(currentRequest);
+      setFriendships(allFriendships);
+      setIsOwner(owned);
+      setIsAdmin(admin && !owned);
+      setCanSeeMembers(maySeeMembers);
+      setDirectConversations(conversations.filter((item) => item.kind === "direct"));
+      setConversation(conversations.find((item) => item.kind === "ride" && item.rideId === id) ?? null);
+      setRequests(rideRequests);
+      setParticipants(rideParticipants);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not refresh this ride.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   const tabs: RideTab[] = isOwner || isAdmin ? ["Overview", "Members", "Requests"] : ["Overview", "Members"];
   const startDate = ride ? new Date(ride.startsAt).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 
   return <View style={styles.screen}>
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Ride details</Text><View style={{ flex: 1 }} />{conversation && <Pressable accessibilityLabel="Open ride chat" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: conversation.id } })} style={styles.headerAction}><MessageCircle color={colors.forest} size={18} /></Pressable>}</View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !ride ? <EmptyState icon={CalendarDays} title="Ride unavailable" description={error} /> : ride ? <>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
         <View style={styles.hero}><Text style={styles.status}>{ride.status === "cancelled" ? "CANCELLED" : ride.status === "completed" ? "COMPLETED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
         <View style={styles.tabs}>{tabs.map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, item === tab && styles.activeTab]}><Text style={[styles.tabText, item === tab && styles.activeTabText]}>{item}{item === "Requests" && requests.length ? ` · ${requests.length}` : ""}</Text></Pressable>)}</View>
 
