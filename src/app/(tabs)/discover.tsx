@@ -9,6 +9,7 @@ import { PageShell } from "../../components/page-shell";
 import { RideCard } from "../../components/ride-card";
 import { colors } from "../../components/theme";
 import { useAuth } from "../../components/auth-provider";
+import { useStoreVersion } from "../../lib/store-events";
 import { cancelRideRequest, loadNearbyRiders, loadOpenRides, loadUserRideRequests, NearbyRiderData, requestRide, RideCardData, RideRequestData } from "../../lib/app-data";
 
 export default function DiscoverScreen() {
@@ -28,29 +29,28 @@ export default function DiscoverScreen() {
   const [nearbyError, setNearbyError] = useState("");
   const [createRideVisible, setCreateRideVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const storeVersion = useStoreVersion();
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !userId) return;
     let active = true;
-    setRidesLoading(true);
     setRidesError("");
-    loadOpenRides().then((rows) => { if (active) setRides(rows); })
+    loadOpenRides(userId).then((rows) => { if (active) setRides(rows); })
       .catch((cause: unknown) => { if (active) setRidesError(cause instanceof Error ? cause.message : "Could not load rides."); })
       .finally(() => { if (active) setRidesLoading(false); });
     return () => { active = false; };
-  }, [ready, userId]);
+  }, [ready, userId, storeVersion]);
 
   useFocusEffect(useCallback(() => {
-    if (!ready) return;
+    if (!ready || !userId) return;
     let active = true;
-    setNearbyLoading(true);
     setNearbyError("");
-    loadNearbyRiders()
+    loadNearbyRiders(userId)
       .then((rows) => { if (active) setNearbyRiders(rows); })
       .catch((cause: unknown) => { if (active) setNearbyError(cause instanceof Error ? cause.message : "Could not load nearby riders."); })
       .finally(() => { if (active) setNearbyLoading(false); });
     return () => { active = false; };
-  }, [ready]));
+  }, [ready, userId, storeVersion]));
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -61,7 +61,6 @@ export default function DiscoverScreen() {
       return;
     }
     let active = true;
-    setRequestsLoading(true);
     setRequestLoadError("");
     loadUserRideRequests(userId)
       .then((requests) => {
@@ -73,7 +72,7 @@ export default function DiscoverScreen() {
       .catch((cause: unknown) => { if (active) setRequestLoadError(cause instanceof Error ? cause.message : "Could not load your ride request status."); })
       .finally(() => { if (active) setRequestsLoading(false); });
     return () => { active = false; };
-  }, [ready, userId]));
+  }, [ready, userId, storeVersion]));
 
   async function handleRideRequest(ride: RideCardData) {
     if (!userId || busyRideIds[ride.id]) return;
@@ -82,7 +81,7 @@ export default function DiscoverScreen() {
     try {
       const currentRequest = requestsByRide[ride.id];
       if (currentRequest?.status === "pending") {
-        await cancelRideRequest(currentRequest.id);
+        await cancelRideRequest(currentRequest.id, userId);
         setRequestsByRide((current) => ({ ...current, [ride.id]: { ...current[ride.id], status: "cancelled" } }));
       } else {
         const createdRequest = await requestRide(ride.id, userId);
@@ -103,9 +102,9 @@ export default function DiscoverScreen() {
     setRequestLoadError("");
     setRequestsLoading(true);
     const [rideResult, nearbyResult, requestResult] = await Promise.allSettled([
-      loadOpenRides(),
-      loadNearbyRiders(),
-      userId ? loadUserRideRequests(userId) : Promise.resolve([] as RideRequestData[]),
+      userId ? loadOpenRides(userId, true) : Promise.resolve([] as RideCardData[]),
+      userId ? loadNearbyRiders(userId, true) : Promise.resolve([] as NearbyRiderData[]),
+      userId ? loadUserRideRequests(userId, true) : Promise.resolve([] as RideRequestData[]),
     ]);
     if (rideResult.status === "fulfilled") setRides(rideResult.value);
     else setRidesError(rideResult.reason instanceof Error ? rideResult.reason.message : "Could not refresh rides.");

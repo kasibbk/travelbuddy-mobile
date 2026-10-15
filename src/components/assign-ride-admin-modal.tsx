@@ -19,6 +19,7 @@ export function AssignRideAdminModal({ visible, ride, friends, admins, assignedB
   const [assigningUserId, setAssigningUserId] = useState("");
   const [error, setError] = useState("");
   if (!ride) return null;
+  const selectedRide = ride;
 
   const candidates = friends.filter((friend) => friend.status === "accepted" && !admins.some((admin) => admin.userId === friend.otherUserId));
 
@@ -27,7 +28,7 @@ export function AssignRideAdminModal({ visible, ride, friends, admins, assignedB
     setAssigningUserId(friend.otherUserId);
     setError("");
     try {
-      await assignRideAdmin(ride.id, friend.otherUserId, assignedBy);
+      await assignRideAdmin(selectedRide.id, friend.otherUserId, assignedBy);
       onAssigned(friend);
       onClose();
     } catch (cause) {
@@ -39,7 +40,7 @@ export function AssignRideAdminModal({ visible, ride, friends, admins, assignedB
 
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!assigningUserId) onClose(); }}>
     <View style={styles.backdrop}><View style={styles.sheet}>
-      <View style={styles.header}><View style={styles.headerIcon}><ShieldCheck color={colors.lime} size={17} /></View><View style={styles.headingCopy}><Text style={styles.title}>Assign a co-admin</Text><Text numberOfLines={1} style={styles.subtitle}>{ride.title}</Text></View><Pressable accessibilityLabel="Close" disabled={!!assigningUserId} onPress={onClose} style={styles.closeButton}><X color={colors.muted} size={19} /></Pressable></View>
+      <View style={styles.header}><View style={styles.headerIcon}><ShieldCheck color={colors.lime} size={17} /></View><View style={styles.headingCopy}><Text style={styles.title}>Assign a co-admin</Text><Text numberOfLines={1} style={styles.subtitle}>{selectedRide.title}</Text></View><Pressable accessibilityLabel="Close" disabled={!!assigningUserId} onPress={onClose} style={styles.closeButton}><X color={colors.muted} size={19} /></Pressable></View>
       <Text style={styles.helper}>A co-admin can review requests and help manage this ride.</Text>
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
         {candidates.length ? candidates.map((friend) => {

@@ -114,7 +114,7 @@ export default function ProfileScreen() {
     setRefreshing(true);
     setError("");
     try {
-      const [row, locationSaved] = await Promise.all([loadProfile(userId), hasSavedProfileLocation(userId)]);
+      const [row, locationSaved] = await Promise.all([loadProfile(userId, true), hasSavedProfileLocation(userId, true)]);
       setProfile(row);
       setHasLocation(locationSaved);
       if (row) {

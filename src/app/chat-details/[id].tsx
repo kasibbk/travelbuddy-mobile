@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, ArrowRight, Bike, CalendarDays, MessageCircle, Users } from "lucide-react-native";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
+import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { colors } from "../../components/theme";
@@ -21,20 +22,21 @@ export default function ChatDetailsScreen() {
   const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId || !id || Array.isArray(id)) return;
+    const viewerId = userId;
     let active = true;
-    setLoading(true);
     setError("");
     async function load() {
       try {
-        const [rows, friendships] = await Promise.all([loadConversations(userId), loadFriendRequests(userId)]);
+        const [rows, friendships] = await Promise.all([loadConversations(viewerId), loadFriendRequests(viewerId)]);
         const selected = rows.find((row) => row.id === id);
         if (!selected) throw new Error("This conversation isn’t available to your account.");
         const [members, rides] = await Promise.all([
-          loadConversationParticipants(id),
-          selected.kind === "direct" && selected.otherUserId ? loadSharedActiveRides(selected.otherUserId) : Promise.resolve([] as SharedRideData[]),
+          loadConversationParticipants(id, viewerId),
+          selected.kind === "direct" && selected.otherUserId ? loadSharedActiveRides(selected.otherUserId, viewerId) : Promise.resolve([] as SharedRideData[]),
         ]);
         if (!active) return;
         setConversation(selected);
@@ -50,7 +52,7 @@ export default function ChatDetailsScreen() {
     }
     void load();
     return () => { active = false; };
-  }, [ready, userId, id]));
+  }, [ready, userId, id, storeVersion]));
 
   async function openDirectChat(participant: ConversationParticipantData) {
     if (!userId || chattingUserId || participant.userId === userId) return;
@@ -58,7 +60,7 @@ export default function ChatDetailsScreen() {
     setActionError("");
     try {
       const existing = directConversations.find((item) => item.otherUserId === participant.userId);
-      const conversationId = existing?.id ?? await createDirectConversation(participant.userId);
+      const conversationId = existing?.id ?? await createDirectConversation(participant.userId, userId);
       router.push({ pathname: "/chat/[id]", params: { id: conversationId, title: participant.displayName } });
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Could not open this conversation.");

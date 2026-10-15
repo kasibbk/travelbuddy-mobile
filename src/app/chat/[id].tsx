@@ -3,10 +3,11 @@ import { ArrowLeft, MessageCircle, MoreHorizontal, Send } from "lucide-react-nat
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "../../components/auth-provider";
+import { useStoreVersion } from "../../lib/store-events";
 import { EmptyState } from "../../components/empty-state";
 import { Avatar } from "../../components/avatar";
 import { colors } from "../../components/theme";
-import { ConversationData, loadConversations, loadMessages, MessageData, sendMessage } from "../../lib/app-data";
+import { ConversationData, loadConversations, loadMessages, MessageData, sendMessage, syncMessages } from "../../lib/app-data";
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -19,6 +20,11 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const storeVersion = useStoreVersion();
+
+  useEffect(() => {
+    if (ready && userId && id && !Array.isArray(id)) void syncMessages(id, userId).catch(() => undefined);
+  }, [ready, userId, id]);
 
   useEffect(() => {
     if (!ready) return;
@@ -31,7 +37,6 @@ export default function ChatScreen() {
     }
 
     let active = true;
-    setLoading(true);
     setError("");
     loadConversations(userId).then(async (rows) => {
       const selected = rows.find((row) => row.id === id);
@@ -39,7 +44,7 @@ export default function ChatScreen() {
         if (active) setError("This conversation isn’t available to your account.");
         return;
       }
-      const thread = await loadMessages(id);
+      const thread = await loadMessages(id, userId);
       if (active) {
         setConversation(selected);
         setMessages(thread);
@@ -48,7 +53,7 @@ export default function ChatScreen() {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load this conversation.");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId, id]);
+  }, [ready, userId, id, storeVersion]);
 
   const title = routeTitle || conversation?.title || "Conversation";
   const initials = title.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -61,7 +66,7 @@ export default function ChatScreen() {
     setDraft("");
     try {
       const message = await sendMessage(conversation.id, userId, body);
-      setMessages((current) => [...current, message]);
+      setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
     } catch (cause) {
       setDraft(body);
       setSendError(cause instanceof Error ? cause.message : "Could not send your message.");

@@ -7,6 +7,7 @@ import { Avatar } from "./avatar";
 import { colors } from "./theme";
 import { useAuth } from "./auth-provider";
 import { loadProfile, ProfileData } from "../lib/app-data";
+import { useStoreVersion } from "../lib/store-events";
 
 type AppHeaderProps = {
   eyebrow: string;
@@ -19,13 +20,14 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
   const router = useRouter();
   const { ready, userId, userEmail } = useAuth();
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId) { setProfile(null); return; }
     let active = true;
     loadProfile(userId).then((row) => { if (active) setProfile(row); }).catch(() => { if (active) setProfile(null); });
     return () => { active = false; };
-  }, [ready, userId]));
+  }, [ready, userId, storeVersion]));
 
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()
     || userEmail?.slice(0, 2).toUpperCase()

@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../components/auth-provider";
+import { SyncProvider } from "../components/sync-provider";
 import { colors } from "../components/theme";
 
 export default function RootLayout() {
@@ -11,7 +12,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <SafeAreaView style={{ flex: 1, backgroundColor: colors.paper }} edges={["top"]}>
-          <RouteGuard />
+          <SyncProvider><RouteGuard /></SyncProvider>
         </SafeAreaView>
       </SafeAreaProvider>
     </AuthProvider>

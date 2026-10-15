@@ -1,6 +1,7 @@
 import { createContext, PropsWithChildren, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import { clearStore } from "../lib/local-store";
 
 type AuthResult = { error: string | null };
 type SignUpResult = AuthResult & { hasSession: boolean };
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   async function signOut(): Promise<AuthResult> {
     const { error } = await supabase.auth.signOut();
+    if (!error) await clearStore();
     return { error: error?.message ?? null };
   }
 

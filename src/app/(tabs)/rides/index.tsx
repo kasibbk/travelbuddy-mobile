@@ -9,6 +9,7 @@ import { PageShell } from "../../../components/page-shell";
 import { RideCard } from "../../../components/ride-card";
 import { colors } from "../../../components/theme";
 import { useAuth } from "../../../components/auth-provider";
+import { useStoreVersion } from "../../../lib/store-events";
 import {
   AdminRequestData,
   FriendData,
@@ -35,6 +36,7 @@ export default function MyRidesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<{ requestId: string; decision: "approved" | "declined" } | null>(null);
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -47,12 +49,11 @@ export default function MyRidesScreen() {
       return;
     }
     let active = true;
-    setLoading(true);
     setError("");
     Promise.all([loadUserRides(userId), loadPendingAdminRequests(userId), loadFriendRequests(userId)])
       .then(async ([userRides, pendingRequests, friendRows]) => {
         const ownedRideIds = userRides.filter((ride) => ride.creatorId === userId).map((ride) => ride.id);
-        const adminsByRide = await loadRideAdmins(ownedRideIds);
+        const adminsByRide = await loadRideAdmins(ownedRideIds, userId);
         if (!active) return;
         setRides(userRides);
         setRequests(pendingRequests);
@@ -62,7 +63,7 @@ export default function MyRidesScreen() {
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load your rides."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId]));
+  }, [ready, userId, storeVersion]));
 
   const now = Date.now();
   const upcoming = useMemo(() => rides.filter((ride) => ride.status === "open" && new Date(ride.startsAt).getTime() >= now), [rides, now]);
@@ -84,7 +85,7 @@ export default function MyRidesScreen() {
     setReviewing({ requestId: request.id, decision });
     setReviewErrors((current) => ({ ...current, [request.id]: "" }));
     try {
-      await reviewRideRequest(request.id, decision);
+      await reviewRideRequest(request.id, decision, userId ?? "");
       setRequests((current) => current.filter((item) => item.id !== request.id));
     } catch (cause) {
       setReviewErrors((current) => ({ ...current, [request.id]: cause instanceof Error ? cause.message : "Could not review this request." }));
@@ -98,9 +99,9 @@ export default function MyRidesScreen() {
     setRefreshing(true);
     setError("");
     try {
-      const [userRides, pendingRequests, friendRows] = await Promise.all([loadUserRides(userId), loadPendingAdminRequests(userId), loadFriendRequests(userId)]);
+      const [userRides, pendingRequests, friendRows] = await Promise.all([loadUserRides(userId, true), loadPendingAdminRequests(userId, true), loadFriendRequests(userId, true)]);
       const ownedRideIds = userRides.filter((ride) => ride.creatorId === userId).map((ride) => ride.id);
-      const adminsByRide = await loadRideAdmins(ownedRideIds);
+      const adminsByRide = await loadRideAdmins(ownedRideIds, userId, true);
       setRides(userRides);
       setRequests(pendingRequests);
       setFriends(friendRows);

@@ -7,6 +7,7 @@ import { EmptyState } from "../../../components/empty-state";
 import { PageShell } from "../../../components/page-shell";
 import { colors } from "../../../components/theme";
 import { useAuth } from "../../../components/auth-provider";
+import { useStoreVersion } from "../../../lib/store-events";
 import { createDirectConversation, createFriendRequest, FriendData, loadFriendRequests, loadNearbyRiders, NearbyRiderData, respondToFriendRequest } from "../../../lib/app-data";
 
 export default function FriendsScreen() {
@@ -21,6 +22,7 @@ export default function FriendsScreen() {
   const [busyKey, setBusyKey] = useState("");
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -31,9 +33,8 @@ export default function FriendsScreen() {
       return;
     }
     let active = true;
-    setLoading(true);
     setError("");
-    Promise.all([loadNearbyRiders(), loadFriendRequests(userId)])
+    Promise.all([loadNearbyRiders(userId), loadFriendRequests(userId)])
       .then(([nearbyRows, friendRows]) => {
         if (active) {
           setNearby(nearbyRows);
@@ -43,7 +44,7 @@ export default function FriendsScreen() {
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load riders."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId]));
+  }, [ready, userId, storeVersion]));
 
   const visibleNearby = useMemo(() => nearby.filter((person) => person.name.toLowerCase().includes(query.toLowerCase())), [nearby, query]);
   const acceptedFriends = useMemo(() => friendRequests.filter((friend) => friend.status === "accepted" && friend.name.toLowerCase().includes(query.toLowerCase())), [friendRequests, query]);
@@ -56,7 +57,7 @@ export default function FriendsScreen() {
     setActionErrors((current) => ({ ...current, [person.id]: "" }));
     try {
       await createFriendRequest(userId, person.id);
-      setFriendRequests(await loadFriendRequests(userId));
+      setFriendRequests(await loadFriendRequests(userId, true));
     } catch (cause) {
       setActionErrors((current) => ({ ...current, [person.id]: cause instanceof Error ? cause.message : "Could not send the friend request." }));
     } finally {
@@ -69,8 +70,8 @@ export default function FriendsScreen() {
     setBusyKey(friend.id);
     setActionErrors((current) => ({ ...current, [friend.id]: "" }));
     try {
-      await respondToFriendRequest(friend.id, accept);
-      setFriendRequests(await loadFriendRequests(userId));
+      await respondToFriendRequest(friend.id, accept, userId);
+      setFriendRequests(await loadFriendRequests(userId, true));
     } catch (cause) {
       setActionErrors((current) => ({ ...current, [friend.id]: cause instanceof Error ? cause.message : "Could not respond to the friend request." }));
     } finally {
@@ -83,7 +84,7 @@ export default function FriendsScreen() {
     setBusyKey(friend.id);
     setActionErrors((current) => ({ ...current, [friend.id]: "" }));
     try {
-      const conversationId = await createDirectConversation(friend.otherUserId);
+      const conversationId = await createDirectConversation(friend.otherUserId, userId);
       router.push({ pathname: "/chat/[id]", params: { id: conversationId, title: friend.name } });
     } catch (cause) {
       setActionErrors((current) => ({ ...current, [friend.id]: cause instanceof Error ? cause.message : "Could not open this conversation." }));
@@ -96,7 +97,7 @@ export default function FriendsScreen() {
     if (!userId || refreshing) return;
     setRefreshing(true);
     setError("");
-    const [nearbyResult, friendsResult] = await Promise.allSettled([loadNearbyRiders(), loadFriendRequests(userId)]);
+    const [nearbyResult, friendsResult] = await Promise.allSettled([loadNearbyRiders(userId, true), loadFriendRequests(userId, true)]);
     if (nearbyResult.status === "fulfilled") setNearby(nearbyResult.value);
     else setError(nearbyResult.reason instanceof Error ? nearbyResult.reason.message : "Could not refresh nearby riders.");
     if (friendsResult.status === "fulfilled") setFriendRequests(friendsResult.value);

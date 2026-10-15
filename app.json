@@ -29,7 +29,8 @@
         {
           "locationWhenInUsePermission": "TravelBuddy uses your location to suggest nearby riders. Your exact coordinates are never shown to other riders."
         }
-      ]
+      ],
+      "expo-sqlite"
     ]
   }
 }

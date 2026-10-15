@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, CalendarDays, Check, MessageCircle, ShieldCheck, Users, X } from "lucide-react-native";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
+import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { colors } from "../../components/theme";
@@ -52,26 +53,27 @@ export default function RideDetailsScreen() {
   const [error, setError] = useState("");
   const [cancelDialog, setCancelDialog] = useState(false);
   const [leaveDialog, setLeaveDialog] = useState(false);
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId || !id || Array.isArray(id)) return;
+    const viewerId = userId;
     let active = true;
-    setLoading(true);
     setError("");
     async function load() {
       try {
         const [rideRow, ownRequests, adminRows, allFriendships, conversations] = await Promise.all([
-          loadRideDetails(id),
-          loadUserRideRequests(userId),
-          loadRideAdmins([id]),
-          loadFriendRequests(userId),
-          loadConversations(userId),
+          loadRideDetails(id, viewerId),
+          loadUserRideRequests(viewerId),
+          loadRideAdmins([id], viewerId),
+          loadFriendRequests(viewerId),
+          loadConversations(viewerId),
         ]);
         if (!active) return;
         if (!rideRow) throw new Error("This ride is unavailable.");
         const currentRequest = ownRequests.find((request) => request.rideId === id) ?? null;
-        const owned = rideRow.creatorId === userId;
-        const admin = !!adminRows[id]?.some((item) => item.userId === userId);
+        const owned = rideRow.creatorId === viewerId;
+        const admin = !!adminRows[id]?.some((item) => item.userId === viewerId);
         const approved = currentRequest?.status === "approved";
         const maySeeMembers = owned || admin || approved;
         setRide(rideRow);
@@ -82,8 +84,8 @@ export default function RideDetailsScreen() {
         setCanSeeMembers(maySeeMembers);
         setDirectConversations(conversations.filter((item) => item.kind === "direct"));
         setConversation(conversations.find((item) => item.kind === "ride" && item.rideId === id) ?? null);
-        setRequests(owned || admin ? await loadRideRequests(id) : []);
-        setParticipants(maySeeMembers ? await loadRideParticipants(id) : []);
+        setRequests(owned || admin ? await loadRideRequests(id, viewerId) : []);
+        setParticipants(maySeeMembers ? await loadRideParticipants(id, viewerId) : []);
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Could not load this ride.");
       } finally {
@@ -92,7 +94,7 @@ export default function RideDetailsScreen() {
     }
     void load();
     return () => { active = false; };
-  }, [ready, userId, id]));
+  }, [ready, userId, id, storeVersion]));
 
   async function handleRequest() {
     if (!userId || !ride || busy) return;
@@ -100,7 +102,7 @@ export default function RideDetailsScreen() {
     setError("");
     try {
       if (requestState?.status === "pending") {
-        await cancelRideRequest(requestState.id);
+        await cancelRideRequest(requestState.id, userId);
         setRequestState({ ...requestState, status: "cancelled" });
       } else {
         setRequestState(await requestRide(ride.id, userId));
@@ -117,7 +119,7 @@ export default function RideDetailsScreen() {
     setBusy(true);
     setError("");
     try {
-      await cancelRide(ride.id);
+      await cancelRide(ride.id, userId ?? "");
       setRide({ ...ride, status: "cancelled" });
       setRequests([]);
       setCancelDialog(false);
@@ -133,7 +135,7 @@ export default function RideDetailsScreen() {
     setBusy(true);
     setError("");
     try {
-      await leaveRide(ride.id);
+      await leaveRide(ride.id, userId ?? "");
       router.replace("/(tabs)/rides");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not leave this ride.");
@@ -161,7 +163,7 @@ export default function RideDetailsScreen() {
     setError("");
     try {
       const existing = directConversations.find((item) => item.otherUserId === participantId);
-      const conversationId = existing?.id ?? await createDirectConversation(participantId);
+      const conversationId = existing?.id ?? await createDirectConversation(participantId, userId ?? "");
       router.push({ pathname: "/chat/[id]", params: { id: conversationId, title: displayName } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open this conversation.");
@@ -175,10 +177,10 @@ export default function RideDetailsScreen() {
     setBusy(true);
     setError("");
     try {
-      await reviewRideRequest(request.id, decision);
+      await reviewRideRequest(request.id, decision, userId ?? "");
       setRequests((current) => current.filter((item) => item.id !== request.id));
       if (decision === "approved") {
-        setParticipants(await loadRideParticipants(request.rideId));
+        setParticipants(await loadRideParticipants(request.rideId, userId ?? "", true));
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not review this request.");
@@ -193,11 +195,11 @@ export default function RideDetailsScreen() {
     setError("");
     try {
       const [rideRow, ownRequests, adminRows, allFriendships, conversations] = await Promise.all([
-        loadRideDetails(id),
-        loadUserRideRequests(userId),
-        loadRideAdmins([id]),
-        loadFriendRequests(userId),
-        loadConversations(userId),
+        loadRideDetails(id, userId, true),
+        loadUserRideRequests(userId, true),
+        loadRideAdmins([id], userId, true),
+        loadFriendRequests(userId, true),
+        loadConversations(userId, true),
       ]);
       if (!rideRow) throw new Error("This ride is unavailable.");
       const currentRequest = ownRequests.find((request) => request.rideId === id) ?? null;
@@ -205,8 +207,8 @@ export default function RideDetailsScreen() {
       const admin = !!adminRows[id]?.some((item) => item.userId === userId);
       const maySeeMembers = owned || admin || currentRequest?.status === "approved";
       const [rideRequests, rideParticipants] = await Promise.all([
-        owned || admin ? loadRideRequests(id) : Promise.resolve([] as AdminRequestData[]),
-        maySeeMembers ? loadRideParticipants(id) : Promise.resolve([] as RideParticipantData[]),
+        owned || admin ? loadRideRequests(id, userId, true) : Promise.resolve([] as AdminRequestData[]),
+        maySeeMembers ? loadRideParticipants(id, userId, true) : Promise.resolve([] as RideParticipantData[]),
       ]);
       setRide(rideRow);
       setRequestState(currentRequest);

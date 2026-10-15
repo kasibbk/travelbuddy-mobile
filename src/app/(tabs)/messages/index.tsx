@@ -7,6 +7,7 @@ import { EmptyState } from "../../../components/empty-state";
 import { PageShell } from "../../../components/page-shell";
 import { colors } from "../../../components/theme";
 import { useAuth } from "../../../components/auth-provider";
+import { useStoreVersion } from "../../../lib/store-events";
 import { ConversationData, loadConversations } from "../../../lib/app-data";
 
 export default function MessagesScreen() {
@@ -18,26 +19,26 @@ export default function MessagesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [refreshError, setRefreshError] = useState("");
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
     if (!userId) { setConversations([]); setLoading(false); return; }
     let active = true;
-    setLoading(true);
     setError("");
     loadConversations(userId)
       .then((rows) => { if (active) setConversations(rows); })
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load conversations."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId]));
+  }, [ready, userId, storeVersion]));
 
   async function refreshConversations() {
     if (!userId || refreshing) return;
     setRefreshing(true);
     setRefreshError("");
     try {
-      setConversations(await loadConversations(userId));
+      setConversations(await loadConversations(userId, true));
       setError("");
     } catch (cause) {
       setRefreshError(cause instanceof Error ? cause.message : "Could not refresh conversations.");

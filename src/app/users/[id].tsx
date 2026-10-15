@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, Bike, MapPin, MessageCircle, UserPlus, Users } from "lucide-react-native";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
+import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { colors } from "../../components/theme";
@@ -19,14 +20,14 @@ export default function PublicUserProfileScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId || !id || Array.isArray(id)) return;
     if (id === userId) { router.replace("/profile"); return; }
     let active = true;
-    setLoading(true);
     setError("");
-    Promise.all([loadPublicProfile(id), loadFriendRequests(userId)])
+    Promise.all([loadPublicProfile(id, userId), loadFriendRequests(userId)])
       .then(([row, friendships]) => {
         if (!active) return;
         setProfile(row);
@@ -35,14 +36,14 @@ export default function PublicUserProfileScreen() {
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load this profile."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId, id, router]));
+  }, [ready, userId, id, router, storeVersion]));
 
   async function refreshProfile() {
     if (!userId || !id || Array.isArray(id) || refreshing) return;
     setRefreshing(true);
     setError("");
     try {
-      const [row, friendships] = await Promise.all([loadPublicProfile(id), loadFriendRequests(userId)]);
+      const [row, friendships] = await Promise.all([loadPublicProfile(id, userId, true), loadFriendRequests(userId, true)]);
       setProfile(row);
       setFriendship(friendships.find((item) => item.otherUserId === id) ?? null);
     } catch (cause) {
@@ -73,7 +74,7 @@ export default function PublicUserProfileScreen() {
     setBusy(true);
     setError("");
     try {
-      const conversationId = await createDirectConversation(id);
+      const conversationId = await createDirectConversation(id, userId ?? "");
       router.push({ pathname: "/chat/[id]", params: { id: conversationId, title: profile?.displayName ?? "Friend" } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open this conversation.");
