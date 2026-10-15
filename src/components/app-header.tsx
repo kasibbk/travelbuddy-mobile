@@ -8,6 +8,7 @@ import { colors } from "./theme";
 import { useAuth } from "./auth-provider";
 import { loadProfile, ProfileData } from "../lib/app-data";
 import { useStoreVersion } from "../lib/store-events";
+import { loadNotifications, NotificationData } from "../lib/notifications";
 
 type AppHeaderProps = {
   eyebrow: string;
@@ -20,12 +21,22 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
   const router = useRouter();
   const { ready, userId, userEmail } = useAuth();
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId) { setProfile(null); return; }
     let active = true;
     loadProfile(userId).then((row) => { if (active) setProfile(row); }).catch(() => { if (active) setProfile(null); });
+    return () => { active = false; };
+  }, [ready, userId, storeVersion]));
+
+  useFocusEffect(useCallback(() => {
+    if (!ready || !userId) { setUnreadCount(0); return; }
+    let active = true;
+    loadNotifications(userId)
+      .then((rows) => { if (active) setUnreadCount(rows.filter((row: NotificationData) => !row.readAt).length); })
+      .catch((error: unknown) => { if (active && __DEV__) console.warn("[notifications] Could not load unread count", error); });
     return () => { active = false; };
   }, [ready, userId, storeVersion]));
 
@@ -42,7 +53,10 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
         </View>
         <View style={styles.topActions}>
           {onCreate && <Pressable accessibilityLabel="Create a ride" onPress={onCreate} style={styles.createIcon}><Plus color={colors.surface} size={19} /></Pressable>}
-          <Pressable accessibilityLabel="Notifications" style={styles.iconButton}><Bell color={colors.ink} size={18} /><View style={styles.notificationDot} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={unreadCount ? `Notifications, ${unreadCount} unread` : "Notifications"} onPress={() => router.push("/notifications")} style={styles.iconButton}>
+            <Bell color={colors.ink} size={18} />
+            {unreadCount > 0 && <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text></View>}
+          </Pressable>
           <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} size={36} /></Pressable>
         </View>
       </View>
@@ -64,7 +78,8 @@ const styles = StyleSheet.create({
   topActions: { flexDirection: "row", alignItems: "center", gap: 11 },
   createIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", position: "relative" },
-  notificationDot: { position: "absolute", top: 6, right: 6, width: 6, height: 6, borderRadius: 3, backgroundColor: colors.orange, borderWidth: 1, borderColor: colors.paper },
+  notificationBadge: { position: "absolute", top: 0, right: -3, minWidth: 15, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.orange, borderWidth: 1, borderColor: colors.paper },
+  notificationBadgeText: { color: colors.surface, fontSize: 8, fontWeight: "800" },
   titleBlock: { paddingTop: 22 },
   eyebrowRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   eyebrow: { color: colors.muted, fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },

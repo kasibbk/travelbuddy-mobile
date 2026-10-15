@@ -487,13 +487,13 @@ export async function syncMessages(conversationId: string, userId: string): Prom
   if (!stored) { await loadMessages(conversationId, userId, true); return; }
   const last = stored[stored.length - 1]?.createdAt;
   let query = supabase.from("messages").select("id, sender_id, body, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: true });
-  if (last) query = query.gt("created_at", last);
+  if (last) query = query.gte("created_at", last);
   const { data, error } = await query;
   if (error) throw error;
   if (!data?.length) return;
   const known = new Set(stored.map((message) => message.id));
   const fresh = data.filter((message) => !known.has(message.id)).map((message) => ({ id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at }));
-  if (fresh.length) await writeStored(userId, `messages:${conversationId}`, [...stored, ...fresh]);
+  if (fresh.length) await writeStored(userId, `messages:${conversationId}`, [...stored, ...fresh].sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
 }
 
 export async function sendMessage(conversationId: string, senderId: string, body: string): Promise<MessageData> {

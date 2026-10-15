@@ -2,6 +2,7 @@ import { createContext, PropsWithChildren, useContext, useEffect, useState } fro
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { clearStore } from "../lib/local-store";
+import { unregisterPushTokens } from "../lib/notifications";
 
 type AuthResult = { error: string | null };
 type SignUpResult = AuthResult & { hasSession: boolean };
@@ -73,6 +74,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }
 
   async function signOut(): Promise<AuthResult> {
+    if (session?.user.id) {
+      try {
+        await unregisterPushTokens(session.user.id);
+      } catch (error) {
+        console.warn("[push] Could not unregister this device before sign-out", error);
+      }
+    }
     const { error } = await supabase.auth.signOut();
     if (!error) await clearStore();
     return { error: error?.message ?? null };
