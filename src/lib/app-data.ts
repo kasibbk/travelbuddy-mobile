@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import { localFirst } from "./local-first";
 import { readStored, updateStored, writeStored } from "./local-store";
+import { loadNotifications } from "./notifications";
 
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
 async function refreshStored(...tasks: Promise<unknown>[]): Promise<void> {
@@ -88,6 +89,12 @@ export type NearbyRiderData = {
   name: string;
   city: string | null;
   distanceKm: number;
+};
+
+export type PublicUserSearchData = {
+  id: string;
+  name: string;
+  avatarPath: string | null;
 };
 
 export type FriendData = {
@@ -307,6 +314,18 @@ export async function loadNearbyRiders(userId: string, force = false): Promise<N
     return ((data ?? []) as { user_id: string; display_name: string; home_city: string | null; approximate_distance_km: number }[])
       .map((rider) => ({ id: rider.user_id, name: rider.display_name, city: rider.home_city, distanceKm: rider.approximate_distance_km }));
   }, { force });
+}
+
+export async function searchPublicUsers(query: string): Promise<PublicUserSearchData[]> {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length < 2) return [];
+  const { data, error } = await supabase.rpc("search_public_users", {
+    p_query: normalizedQuery,
+    p_limit: 25,
+  });
+  if (error) throw error;
+  return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null }[])
+    .map((profile) => ({ id: profile.user_id, name: profile.display_name, avatarPath: profile.avatar_path }));
 }
 
 export async function loadFriendRequests(userId: string, force = false): Promise<FriendData[]> {
@@ -572,16 +591,31 @@ export async function removeProfileLocation(userId: string): Promise<void> {
 
 // Pulls every top-level dataset into storage; screens only read from storage afterwards.
 export async function syncAll(userId: string): Promise<void> {
-  await loadProfile(userId, true).catch(() => null);
+  const conversationsPromise = loadConversations(userId, true);
   const results = await Promise.allSettled([
+    loadProfile(userId, true),
     hasSavedProfileLocation(userId, true),
     loadOpenRides(userId, true),
     loadNearbyRiders(userId, true),
     loadFriendRequests(userId, true),
-    loadConversations(userId, true),
+    conversationsPromise,
     loadUserRideRequests(userId, true),
     loadUserRides(userId, true).then((rides) => loadRideAdmins(rides.filter((ride) => ride.creatorId === userId).map((ride) => ride.id), userId, true)),
     loadPendingAdminRequests(userId, true),
+    loadNotifications(userId, true),
   ]);
-  if (__DEV__) for (const result of results) if (result.status === "rejected") console.warn("[sync] dataset failed", result.reason);
+  const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+
+  const conversationsResult = results[5];
+  if (conversationsResult.status === "fulfilled") {
+    const messageResults = await Promise.allSettled(
+      conversationsResult.value.map((conversation) => syncMessages(conversation.id, userId)),
+    );
+    failures.push(...messageResults.flatMap((result) => result.status === "rejected" ? [result.reason] : []));
+  }
+
+  if (failures.length) {
+    for (const failure of failures) console.error("[sync] Dataset sync failed", failure);
+    throw new Error(`Catch-up sync did not finish successfully (${failures.length} dataset(s) failed).`);
+  }
 }

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
+import { DateTimeField } from "./date-time-field";
 import { useAuth } from "./auth-provider";
 import { createRide, RideCardData } from "../lib/app-data";
 import { colors } from "./theme";
@@ -9,12 +11,12 @@ type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: 
 
 export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModalProps) {
   const { userId } = useAuth();
+  const insets = useSafeAreaInsets();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [start, setStart] = useState("");
   const [destination, setDestination] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
+  const [startsAt, setStartsAt] = useState<Date | null>(null);
   const [capacity, setCapacity] = useState("6");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -28,15 +30,8 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
     const capacityNumber = Number(capacity);
     if (!Number.isInteger(capacityNumber) || capacityNumber < 2 || capacityNumber > 100) { setError("Rider limit must be a whole number from 2 to 100."); return; }
 
-    const dateParts = date.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    const timeParts = time.trim().match(/^(\d{2}):(\d{2})$/);
-    if (!dateParts || !timeParts || Number(timeParts[1]) > 23 || Number(timeParts[2]) > 59) {
-      setError("Enter the date as YYYY-MM-DD and time as 24-hour HH:MM.");
-      return;
-    }
-    const startsAt = new Date(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3]), Number(timeParts[1]), Number(timeParts[2]));
-    if (startsAt.getFullYear() !== Number(dateParts[1]) || startsAt.getMonth() !== Number(dateParts[2]) - 1 || startsAt.getDate() !== Number(dateParts[3]) || startsAt.getHours() !== Number(timeParts[1]) || startsAt.getMinutes() !== Number(timeParts[2])) {
-      setError("Enter a valid date and time.");
+    if (!startsAt || Number.isNaN(startsAt.getTime())) {
+      setError("Choose a date and meet-up time.");
       return;
     }
     if (startsAt.getTime() <= Date.now()) { setError("Choose a future date and time."); return; }
@@ -57,8 +52,7 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
       setDescription("");
       setStart("");
       setDestination("");
-      setDate("");
-      setTime("");
+      setStartsAt(null);
       setCapacity("6");
       onClose();
     } catch (cause) {
@@ -70,8 +64,8 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={styles.sheet}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
+        <View style={[styles.sheet, { paddingBottom: Math.max(Platform.OS === "ios" ? 26 : 16, insets.bottom + 12) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>MAKE ROOM FOR ADVENTURE</Text><Text style={styles.heading}>Plan a new ride</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
@@ -81,7 +75,7 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
             <Field label="Destination" value={destination} onChangeText={setDestination} placeholder="Where you're headed" maxLength={160} />
             <Field label="Description · optional" value={description} onChangeText={setDescription} placeholder="A few details for riders" multiline maxLength={2000} />
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
-            <View style={styles.split}><Field style={styles.half} label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" /><Field style={styles.half} label="Meet-up time" value={time} onChangeText={setTime} placeholder="HH:MM" autoCapitalize="none" /></View>
+            <View style={styles.split}><DateTimeField label="Date" mode="date" value={startsAt} onChange={setStartsAt} /><DateTimeField label="Meet-up time" mode="time" value={startsAt} onChange={setStartsAt} /></View>
             <Field label="Rider limit" value={capacity} onChangeText={(value) => setCapacity(value.replace(/\D/g, "").slice(0, 3))} keyboardType="number-pad" maxLength={3} />
             <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>You’ll be assigned as the ride owner.</Text></View></View>
             {!!error && <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>}

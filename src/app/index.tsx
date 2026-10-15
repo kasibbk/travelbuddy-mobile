@@ -1,29 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { ActivityIndicator, ImageBackground, Pressable, StyleSheet, Text, View } from "react-native";
 import { Bike, ChevronRight, MapPin } from "lucide-react-native";
-import { ImageBackground, Pressable, StyleSheet, Text, View } from "react-native";
 import { Link, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../components/auth-provider";
+import { useInitialSyncReady } from "../components/sync-provider";
 import { colors } from "../components/theme";
 
 const coverImage = "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1400&q=90";
 
 export default function SplashScreen() {
   const router = useRouter();
-  const [syncProgress, setSyncProgress] = useState(0);
+  const { ready, isSignedIn } = useAuth();
+  const initialSyncReady = useInitialSyncReady();
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    const startedAt = Date.now();
-    const progressTimer = setInterval(() => {
-      setSyncProgress(Math.min(100, Math.round((Date.now() - startedAt) / 30)));
-    }, 100);
-    const continueTimer = setTimeout(() => router.replace("/login"), 3000);
+    if (ready && isSignedIn && initialSyncReady) router.replace("/(tabs)/discover");
+  }, [initialSyncReady, isSignedIn, ready, router]);
 
-    return () => {
-      clearInterval(progressTimer);
-      clearTimeout(continueTimer);
-    };
-  }, [router]);
-
-  const syncMessage = syncProgress < 34 ? "Checking your ride map" : syncProgress < 68 ? "Finding riders nearby" : "Getting your first ride ready";
+  const isLoading = !ready || (isSignedIn && !initialSyncReady);
+  const syncMessage = !ready
+    ? "Checking your saved session"
+    : isSignedIn
+      ? "Syncing your rides and messages"
+      : "Ready when you are";
 
   return (
     <View style={styles.screen}>
@@ -32,17 +33,16 @@ export default function SplashScreen() {
         <View style={styles.brand}><View style={styles.brandMark}><Bike color={colors.lime} size={19} strokeWidth={2.4} /></View><Text style={styles.brandName}>travelbuddy</Text></View>
         <View style={styles.heroCopy}><View style={styles.location}><MapPin color={colors.lime} size={12} /><Text style={styles.locationText}>THE BAY AREA & BEYOND</Text></View><Text style={styles.heroTitle}>Find the long{ "\n" }way around.</Text><Text style={styles.heroSubtitle}>The best rides start with good people.</Text></View>
       </ImageBackground>
-      <View style={styles.content}>
+      <View style={[styles.content, { paddingBottom: Math.max(18, insets.bottom + 12) }]}>
         <View><Text style={styles.eyebrow}>GO A LITTLE FURTHER, TOGETHER</Text><Text style={styles.title}>Your next good day{ "\n" }is just around the bend.</Text><Text style={styles.description}>Find a crew, plan a route, and leave room for the scenic way.</Text></View>
         <View style={styles.syncBlock}>
-          <View style={styles.syncHeader}><View style={styles.syncDot} /><Text style={styles.syncMessage}>{syncMessage}</Text><Text style={styles.syncPercent}>{syncProgress}%</Text></View>
-          <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${syncProgress}%` }]} /></View>
+          <View style={styles.syncHeader}>{isLoading ? <ActivityIndicator color={colors.leaf} size="small" /> : <View style={styles.syncDot} />}<Text style={styles.syncMessage}>{syncMessage}</Text></View>
         </View>
-        <View style={styles.actions}>
+        {ready && !isSignedIn && <View style={styles.actions}>
           <Link href="/login" asChild><Pressable style={styles.primary}><Text style={styles.primaryText}>Sign in</Text><ChevronRight color={colors.ink} size={18} /></Pressable></Link>
           <Link href="/register" asChild><Pressable style={styles.secondary}><Text style={styles.secondaryText}>Create an account</Text></Pressable></Link>
-        </View>
-        <Text style={styles.demoNote}>A demo experience · Account details aren’t stored</Text>
+        </View>}
+        {ready && !isSignedIn && <Text style={styles.demoNote}>Your rides and conversations sync with your account.</Text>}
       </View>
     </View>
   );
@@ -69,9 +69,6 @@ const styles = StyleSheet.create({
   syncHeader: { flexDirection: "row", alignItems: "center", gap: 7 },
   syncDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.leaf },
   syncMessage: { flex: 1, color: colors.muted, fontSize: 8, fontWeight: "600" },
-  syncPercent: { color: colors.leaf, fontSize: 8, fontWeight: "800" },
-  progressTrack: { height: 3, overflow: "hidden", borderRadius: 2, backgroundColor: "#E3E8DE" },
-  progressFill: { height: "100%", borderRadius: 2, backgroundColor: colors.leaf },
   actions: { gap: 8, marginTop: 18 },
   primary: { minHeight: 46, paddingHorizontal: 14, borderRadius: 9, backgroundColor: colors.lime, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   primaryText: { color: colors.ink, fontSize: 11, fontWeight: "800" },

@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, MessageCircle, MoreHorizontal, Send } from "lucide-react-native";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { EmptyState } from "../../components/empty-state";
 import { Avatar } from "../../components/avatar";
 import { colors } from "../../components/theme";
-import { ConversationData, loadConversations, loadMessages, MessageData, sendMessage, syncMessages } from "../../lib/app-data";
+import { ConversationData, loadConversationParticipants, loadConversations, loadMessages, MessageData, sendMessage, syncMessages } from "../../lib/app-data";
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -15,12 +16,15 @@ export default function ChatScreen() {
   const { ready, userId } = useAuth();
   const [conversation, setConversation] = useState<ConversationData | null>(null);
   const [messages, setMessages] = useState<MessageData[]>([]);
+  const [senderNames, setSenderNames] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const storeVersion = useStoreVersion();
+  const messagesRef = useRef<ScrollView>(null);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (ready && userId && id && !Array.isArray(id)) void syncMessages(id, userId).catch(() => undefined);
@@ -31,6 +35,7 @@ export default function ChatScreen() {
     if (!userId || !id || Array.isArray(id)) {
       setConversation(null);
       setMessages([]);
+      setSenderNames({});
       setError("");
       setLoading(false);
       return;
@@ -44,16 +49,33 @@ export default function ChatScreen() {
         if (active) setError("This conversation isn’t available to your account.");
         return;
       }
-      const thread = await loadMessages(id, userId);
+      const [thread, participants] = await Promise.all([
+        loadMessages(id, userId),
+        selected.kind === "ride" ? loadConversationParticipants(id, userId) : Promise.resolve([]),
+      ]);
       if (active) {
         setConversation(selected);
         setMessages(thread);
+        setSenderNames(Object.fromEntries(participants.map((participant) => [participant.userId, participant.displayName])));
       }
     }).catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load this conversation.");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [ready, userId, id, storeVersion]);
+
+  useEffect(() => {
+    if (loading) return;
+    const frame = requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [loading, messages.length]);
+
+  useEffect(() => {
+    const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => subscription.remove();
+  }, []);
 
   const title = routeTitle || conversation?.title || "Conversation";
   const initials = title.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -75,15 +97,16 @@ export default function ChatScreen() {
     }
   }
 
-  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
     <View style={styles.header}><Pressable accessibilityLabel="Back to messages" style={styles.back} onPress={() => router.back()}><ArrowLeft color={colors.ink} size={19} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Open details for ${title}`} disabled={!conversation} onPress={() => conversation && router.push({ pathname: "/chat-details/[id]", params: { id: conversation.id } })} style={styles.headerDetails}><Avatar initials={initials || "?"} color={colors.leaf} size={38} /><View style={styles.headerText}><Text numberOfLines={1} style={styles.name}>{title}</Text><Text style={styles.subline}>{conversation?.detail ?? "TravelBuddy conversation"}</Text></View></Pressable><Pressable accessibilityLabel="More options" disabled style={[styles.more, styles.moreDisabled]}><MoreHorizontal color={colors.muted} size={20} /></Pressable></View>
-    <ScrollView style={styles.messages} contentContainerStyle={styles.messageContent}>
+    <ScrollView ref={messagesRef} style={styles.messages} contentContainerStyle={styles.messageContent} onLayout={() => messagesRef.current?.scrollToEnd({ animated: false })} onContentSizeChange={() => messagesRef.current?.scrollToEnd({ animated: false })} keyboardShouldPersistTaps="handled">
       {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error ? <EmptyState icon={MessageCircle} title="Conversation unavailable" description={error} /> : messages.length ? messages.map((message) => {
         const mine = message.senderId === userId;
-        return <View key={message.id} style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}><Text style={styles.message}>{message.body}</Text><Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text></View>;
+        const senderName = conversation?.kind === "ride" ? senderNames[message.senderId] ?? (mine ? "You" : "Rider") : null;
+        return <View key={message.id} style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}>{senderName && <Text style={styles.senderName}>{senderName}</Text>}<Text style={styles.message}>{message.body}</Text><Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text></View>;
       }) : <EmptyState icon={MessageCircle} title="No messages yet" description="Messages for this conversation will appear here." />}
     </ScrollView>
-    {!!conversation && !error && !loading && <View style={styles.composer}><View style={styles.composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: !draft.trim() || sending }} disabled={!draft.trim() || sending} onPress={submitMessage} style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable>{!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}</View>}
+    {!!conversation && !error && !loading && <View style={[styles.composer, { paddingBottom: Math.max(10, insets.bottom) }]}><View style={styles.composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: !draft.trim() || sending }} disabled={!draft.trim() || sending} onPress={submitMessage} style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable>{!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}</View>}
   </KeyboardAvoidingView>;
 }
 
@@ -110,5 +133,6 @@ const styles = StyleSheet.create({
   otherBubble: { alignSelf: "flex-start", backgroundColor: colors.surface },
   myBubble: { alignSelf: "flex-end", borderColor: "#DFE8D6", borderTopLeftRadius: 13, borderTopRightRadius: 4, backgroundColor: "#EAF0DF" },
   message: { color: "#40554A", fontSize: 10, lineHeight: 15 },
+  senderName: { marginBottom: 4, color: colors.forest, fontSize: 8, fontWeight: "800" },
   messageTime: { marginTop: 6, color: colors.subtle, fontSize: 7, textAlign: "right" },
 });

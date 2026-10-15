@@ -1,4 +1,4 @@
-import { PropsWithChildren, useEffect } from "react";
+import { createContext, PropsWithChildren, useContext, useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { useAuth } from "./auth-provider";
 import { loadConversations, loadFriendRequests, loadOpenRides, loadPendingAdminRequests, loadRideDetails, loadUserRideRequests, loadUserRides, syncAll, syncMessages } from "../lib/app-data";
@@ -9,11 +9,23 @@ import { emitStoreChange } from "../lib/store-events";
 
 const RESUME_SYNC_AFTER_MS = 5 * 60_000;
 
+const InitialSyncContext = createContext(false);
+
+export function useInitialSyncReady() {
+  return useContext(InitialSyncContext);
+}
+
 export function SyncProvider({ children }: PropsWithChildren) {
   const { ready, userId } = useAuth();
+  const [completedUserId, setCompletedUserId] = useState<string | null>(null);
+  const initialSyncReady = ready && (!userId || completedUserId === userId);
 
   useEffect(() => {
-    if (!ready || !userId) return;
+    if (!ready) return;
+    if (!userId) {
+      setCompletedUserId(null);
+      return;
+    }
     const activeUserId = userId;
     let running = false;
     async function sync(onlyIfStale: boolean) {
@@ -30,8 +42,25 @@ export function SyncProvider({ children }: PropsWithChildren) {
       }
     }
 
-    if (storeAvailable) void pruneStoreExcept(activeUserId).then(() => sync(true));
-    const subscription = AppState.addEventListener("change", (state) => { if (state === "active") void sync(true); });
+    let active = true;
+    async function runInitialSync() {
+      try {
+        if (storeAvailable) {
+          await pruneStoreExcept(activeUserId);
+          await sync(false);
+        }
+      } catch (error) {
+        console.error("[sync] Startup catch-up sync failed", error);
+      } finally {
+        if (active) setCompletedUserId(activeUserId);
+      }
+    }
+    void runInitialSync();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void sync(true).catch((error: unknown) => console.warn("[sync] Resume sync failed", error));
+      }
+    });
     const pendingChanges = new Set<string>();
     const messageConversations = new Set<string>();
     const rideDetails = new Set<string>();
@@ -114,11 +143,12 @@ export function SyncProvider({ children }: PropsWithChildren) {
     });
 
     return () => {
+      active = false;
       subscription.remove();
       if (refreshTimer) clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
   }, [ready, userId]);
 
-  return <>{children}</>;
+  return <InitialSyncContext.Provider value={initialSyncReady}>{children}</InitialSyncContext.Provider>;
 }

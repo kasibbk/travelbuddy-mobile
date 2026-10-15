@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, Bike, Eye, EyeOff } from "lucide-react-native";
 import { Link } from "expo-router";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "./auth-provider";
 import { colors } from "./theme";
 
@@ -9,6 +10,7 @@ type AuthScreenProps = { mode: "login" | "register" };
 
 export function AuthScreen({ mode }: AuthScreenProps) {
   const { signIn, signUp, verifySignupOtp, resendSignupOtp } = useAuth();
+  const insets = useSafeAreaInsets();
   const isRegister = mode === "register";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -73,8 +75,8 @@ export function AuthScreen({ mode }: AuthScreenProps) {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: Math.max(22, insets.bottom + 12) }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.topRow}><Link href="/" asChild><Pressable accessibilityLabel="Back to welcome" style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable></Link><View style={styles.brand}><View style={styles.brandMark}><Bike color={colors.lime} size={16} /></View><Text style={styles.brandName}>travelbuddy</Text></View></View>
         <View style={styles.heading}><Text style={styles.eyebrow}>{isRegister && awaitingOtp ? "ONE QUICK CHECK" : isRegister ? "YOUR NEXT CHAPTER STARTS HERE" : "GOOD TO HAVE YOU BACK"}</Text><Text style={styles.title}>{isRegister && awaitingOtp ? "Check your inbox." : isRegister ? "Come on in." : "Welcome back."}</Text><Text style={styles.subtitle}>{isRegister && awaitingOtp ? `Enter the confirmation code we sent to ${email}.` : isRegister ? "Meet your next crew and make room for a new route." : "Your next ride is already taking shape."}</Text></View>
         <View style={styles.form}>
