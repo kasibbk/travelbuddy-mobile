@@ -200,6 +200,41 @@ export async function createRide(input: {
   return ride;
 }
 
+export async function updateRideDetails(rideId: string, userId: string, input: {
+  title: string;
+  description: string;
+  startLabel: string;
+  destinationLabel: string;
+  startsAt: string;
+  capacity: number;
+}): Promise<RideCardData> {
+  const { error } = await supabase.rpc("update_ride_details", {
+    p_ride_id: rideId,
+    p_title: input.title,
+    p_description: input.description,
+    p_start_label: input.startLabel,
+    p_destination_label: input.destinationLabel,
+    p_starts_at: input.startsAt,
+    p_capacity: input.capacity,
+  });
+  if (error) throw error;
+
+  const ride = await loadRideDetails(rideId, userId, true);
+  if (!ride) throw new Error("The ride was updated but could not be reloaded.");
+  const replaceRide = (rides: RideCardData[]) => {
+    const exists = rides.some((item) => item.id === rideId);
+    return (exists ? rides.map((item) => item.id === rideId ? ride : item) : [...rides, ride])
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  };
+  await refreshStored(
+    updateStored<RideCardData[]>(userId, "open-rides", replaceRide),
+    updateStored<RideCardData[]>(userId, "user-rides", replaceRide),
+    updateStored<ConversationData[]>(userId, "conversations", (rows) =>
+      rows.map((row) => row.rideId === rideId ? { ...row, title: ride.title } : row)),
+  );
+  return ride;
+}
+
 export async function loadUserRideRequests(userId: string, force = false): Promise<RideRequestData[]> {
   return localFirst(userId, "user-ride-requests", async () => {
     const { data, error } = await supabase.from("ride_requests")

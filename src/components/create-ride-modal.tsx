@@ -1,15 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
 import { DateTimeField } from "./date-time-field";
 import { useAuth } from "./auth-provider";
-import { createRide, RideCardData } from "../lib/app-data";
+import { createRide, RideCardData, updateRideDetails } from "../lib/app-data";
 import { colors } from "./theme";
 
-type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: (ride: RideCardData) => void };
+type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: (ride: RideCardData) => void; ride?: RideCardData; onUpdated?: (ride: RideCardData) => void };
 
-export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModalProps) {
+export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit, onUpdated }: CreateRideModalProps) {
   const { userId } = useAuth();
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState("");
@@ -20,6 +20,27 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
   const [capacity, setCapacity] = useState("6");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    if (rideToEdit) {
+      const [startLabel = "", destinationLabel = ""] = rideToEdit.route.split(" → ");
+      setTitle(rideToEdit.title);
+      setDescription(rideToEdit.description);
+      setStart(startLabel);
+      setDestination(destinationLabel);
+      setStartsAt(new Date(rideToEdit.startsAt));
+      setCapacity(String(rideToEdit.capacity));
+    } else {
+      setTitle("");
+      setDescription("");
+      setStart("");
+      setDestination("");
+      setStartsAt(null);
+      setCapacity("6");
+    }
+    setError("");
+  }, [visible, rideToEdit]);
 
   async function submitRide() {
     setError("");
@@ -38,25 +59,29 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
 
     setSubmitting(true);
     try {
-      const ride = await createRide({
-        creatorId: userId,
-        title: title.trim(),
-        description: description.trim(),
-        startLabel: start.trim(),
-        destinationLabel: destination.trim(),
-        startsAt: startsAt.toISOString(),
-        capacity: capacityNumber,
-      });
-      onCreated(ride);
-      setTitle("");
-      setDescription("");
-      setStart("");
-      setDestination("");
-      setStartsAt(null);
-      setCapacity("6");
+      const ride = rideToEdit
+        ? await updateRideDetails(rideToEdit.id, userId, {
+          title: title.trim(),
+          description: description.trim(),
+          startLabel: start.trim(),
+          destinationLabel: destination.trim(),
+          startsAt: startsAt.toISOString(),
+          capacity: capacityNumber,
+        })
+        : await createRide({
+          creatorId: userId,
+          title: title.trim(),
+          description: description.trim(),
+          startLabel: start.trim(),
+          destinationLabel: destination.trim(),
+          startsAt: startsAt.toISOString(),
+          capacity: capacityNumber,
+        });
+      if (rideToEdit) onUpdated?.(ride);
+      else onCreated(ride);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not create the ride.");
+      setError(cause instanceof Error ? cause.message : rideToEdit ? "Could not save ride changes." : "Could not create the ride.");
     } finally {
       setSubmitting(false);
     }
@@ -67,7 +92,7 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
         <View style={[styles.sheet, { paddingBottom: Math.max(Platform.OS === "ios" ? 26 : 16, insets.bottom + 12) }]}>
           <View style={styles.sheetHandle} />
-          <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>MAKE ROOM FOR ADVENTURE</Text><Text style={styles.heading}>Plan a new ride</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
+          <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>{rideToEdit ? "KEEP YOUR RIDERS IN THE LOOP" : "MAKE ROOM FOR ADVENTURE"}</Text><Text style={styles.heading}>{rideToEdit ? "Edit ride details" : "Plan a new ride"}</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
             <Field label="Ride name" value={title} onChangeText={setTitle} placeholder="Name this ride" maxLength={100} />
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
@@ -77,9 +102,9 @@ export function CreateRideModal({ visible, onClose, onCreated }: CreateRideModal
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
             <View style={styles.split}><DateTimeField label="Date" mode="date" value={startsAt} onChange={setStartsAt} /><DateTimeField label="Meet-up time" mode="time" value={startsAt} onChange={setStartsAt} /></View>
             <Field label="Rider limit" value={capacity} onChangeText={(value) => setCapacity(value.replace(/\D/g, "").slice(0, 3))} keyboardType="number-pad" maxLength={3} />
-            <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>You’ll be assigned as the ride owner.</Text></View></View>
+            {!rideToEdit && <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>You’ll be assigned as the ride owner.</Text></View></View>}
             {!!error && <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>}
-            <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.primaryButton, submitting && styles.submittingButton]} onPress={submitRide}>{submitting ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>Create ride</Text>}</Pressable>
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.primaryButton, submitting && styles.submittingButton]} onPress={submitRide}>{submitting ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>{rideToEdit ? "Save changes" : "Create ride"}</Text>}</Pressable>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>

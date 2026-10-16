@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, CalendarDays, Check, MessageCircle, ShieldCheck, Users, X } from "lucide-react-native";
+import { ArrowLeft, CalendarDays, Check, MessageCircle, Pencil, ShieldCheck, Users, X } from "lucide-react-native";
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
+import { CreateRideModal } from "../../components/create-ride-modal";
 import { colors } from "../../components/theme";
 import {
   AdminRequestData,
@@ -53,6 +54,7 @@ export default function RideDetailsScreen() {
   const [error, setError] = useState("");
   const [cancelDialog, setCancelDialog] = useState(false);
   const [leaveDialog, setLeaveDialog] = useState(false);
+  const [editDialog, setEditDialog] = useState(false);
   const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
@@ -244,6 +246,7 @@ export default function RideDetailsScreen() {
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Estimated duration</Text><Text style={styles.detailValue}>{ride.duration}</Text></View>
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Rider limit</Text><Text style={styles.detailValue}>{ride.capacity}</Text></View>
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+          {ride.status === "open" && isOwner && <Pressable accessibilityRole="button" onPress={() => setEditDialog(true)} style={[styles.secondaryButton, styles.editButton]}><Pencil color={colors.forest} size={14} /><Text style={styles.secondaryText}>Edit ride details</Text></Pressable>}
           {ride.status === "open" && isOwner && <Pressable accessibilityRole="button" onPress={() => setCancelDialog(true)} style={styles.dangerButton}><X color="#9B493C" size={15} /><Text style={styles.dangerText}>Cancel ride for everyone</Text></Pressable>}
           {ride.status === "open" && !isOwner && !isAdmin && requestState?.status === "approved" && <Pressable accessibilityRole="button" disabled={busy} onPress={() => setLeaveDialog(true)} style={styles.secondaryButton}><Text style={styles.secondaryText}>Leave ride</Text></Pressable>}
           {ride.status === "open" && !isOwner && !isAdmin && requestState?.status !== "approved" && <Pressable accessibilityRole="button" disabled={busy} onPress={handleRequest} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable>}
@@ -260,6 +263,7 @@ export default function RideDetailsScreen() {
     </> : null}
 
     {!!error && !!ride && <Text accessibilityRole="alert" style={styles.floatingError}>{error}</Text>}
+    <CreateRideModal visible={editDialog} ride={ride ?? undefined} onClose={() => setEditDialog(false)} onCreated={setRide} onUpdated={(updatedRide) => { setRide(updatedRide); setEditDialog(false); }} />
     <ConfirmModal visible={cancelDialog} title="Cancel this ride?" message="The ride will be marked cancelled for everyone and move out of Upcoming." confirmText="Cancel ride" busy={busy} onClose={() => setCancelDialog(false)} onConfirm={confirmCancel} />
     <ConfirmModal visible={leaveDialog} title="Leave this ride?" message="You’ll be removed from the ride and its chat." confirmText="Leave ride" busy={busy} onClose={() => setLeaveDialog(false)} onConfirm={confirmLeave} />
   </View>;
@@ -277,6 +281,6 @@ const styles = StyleSheet.create({
   tabs: { marginHorizontal: 16, marginBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", gap: 20 }, tab: { paddingBottom: 9 }, activeTab: { borderBottomWidth: 2, borderBottomColor: colors.forest }, tabText: { color: colors.muted, fontSize: 9, fontWeight: "600" }, activeTabText: { color: colors.forest, fontWeight: "800" },
   panel: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface }, sectionTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" }, description: { marginTop: 8, color: colors.muted, fontSize: 9, lineHeight: 15 }, detailRow: { minHeight: 36, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, detailLabel: { color: colors.muted, fontSize: 9 }, detailValue: { color: colors.ink, fontSize: 9, fontWeight: "700" },
   list: { marginHorizontal: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface }, personRow: { minHeight: 61, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8 }, personLink: { flex: 1, flexDirection: "row", alignItems: "center", gap: 9 }, personCopy: { flex: 1, gap: 3 }, personName: { color: colors.ink, fontSize: 10, fontWeight: "700" }, personRole: { color: colors.muted, fontSize: 8 }, friendState: { color: colors.leaf, fontSize: 8, fontWeight: "700" }, smallAction: { minHeight: 29, paddingHorizontal: 8, borderRadius: 7, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5, backgroundColor: colors.paleGreen }, smallActionText: { color: colors.forest, fontSize: 8, fontWeight: "700" }, actionBusy: { opacity: 0.65 }, approveAction: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen }, declineAction: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#FBF1EB" },
-  primaryButton: { minHeight: 40, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, primaryText: { color: colors.surface, fontSize: 9, fontWeight: "700" }, chatButton: { minHeight: 40, marginTop: 9, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.forest }, secondaryButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 8, alignItems: "center", justifyContent: "center" }, secondaryText: { color: colors.forest, fontSize: 9, fontWeight: "700" }, dangerButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: "#EBD6CF", borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#FBF1EB" }, dangerText: { color: "#9B493C", fontSize: 9, fontWeight: "700" }, error: { marginTop: 9, color: "#9B493C", fontSize: 8 }, floatingError: { marginHorizontal: 16, marginBottom: 6, color: "#9B493C", fontSize: 8 }, loader: { marginVertical: 26 },
+  primaryButton: { minHeight: 40, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, primaryText: { color: colors.surface, fontSize: 9, fontWeight: "700" }, chatButton: { minHeight: 40, marginTop: 9, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.forest }, secondaryButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 8, alignItems: "center", justifyContent: "center" }, editButton: { flexDirection: "row", gap: 7 }, secondaryText: { color: colors.forest, fontSize: 9, fontWeight: "700" }, dangerButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: "#EBD6CF", borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#FBF1EB" }, dangerText: { color: "#9B493C", fontSize: 9, fontWeight: "700" }, error: { marginTop: 9, color: "#9B493C", fontSize: 8 }, floatingError: { marginHorizontal: 16, marginBottom: 6, color: "#9B493C", fontSize: 8 }, loader: { marginVertical: 26 },
   modalBackdrop: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#13251F99" }, modalPanel: { padding: 17, borderRadius: 12, backgroundColor: colors.surface }, modalTitle: { color: colors.ink, fontFamily: "Georgia", fontSize: 20 }, modalMessage: { marginTop: 8, color: colors.muted, fontSize: 9, lineHeight: 14 }, modalActions: { marginTop: 16, flexDirection: "row", justifyContent: "flex-end", gap: 8 }, modalCancel: { minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 7, justifyContent: "center" }, modalCancelText: { color: colors.ink, fontSize: 9 }, modalConfirm: { minWidth: 86, minHeight: 36, paddingHorizontal: 12, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "#9B493C" }, modalConfirmText: { color: colors.surface, fontSize: 9, fontWeight: "700" },
 });
