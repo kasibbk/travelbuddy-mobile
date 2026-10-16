@@ -3,6 +3,8 @@ import { localFirst } from "./local-first";
 import { readStored, updateStored, writeStored } from "./local-store";
 import { loadNotifications } from "./notifications";
 
+const conversationsKey = "conversations-v2";
+
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
 async function refreshStored(...tasks: Promise<unknown>[]): Promise<void> {
   await Promise.allSettled(tasks);
@@ -114,6 +116,7 @@ export type ConversationData = {
   detail: string;
   lastMessage: string;
   updatedAt: string;
+  unreadCount: number;
 };
 
 export type MessageData = {
@@ -229,7 +232,7 @@ export async function updateRideDetails(rideId: string, userId: string, input: {
   await refreshStored(
     updateStored<RideCardData[]>(userId, "open-rides", replaceRide),
     updateStored<RideCardData[]>(userId, "user-rides", replaceRide),
-    updateStored<ConversationData[]>(userId, "conversations", (rows) =>
+    updateStored<ConversationData[]>(userId, conversationsKey, (rows) =>
       rows.map((row) => row.rideId === rideId ? { ...row, title: ride.title } : row)),
   );
   return ride;
@@ -401,8 +404,27 @@ export async function createDirectConversation(otherUserId: string, currentUserI
   return data;
 }
 
+export async function setConversationActive(conversationId: string, sessionId: string, active: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_active_conversation", {
+    p_conversation_id: conversationId,
+    p_session_id: sessionId,
+    p_active: active,
+  });
+  if (error) throw error;
+}
+
+export async function markConversationRead(conversationId: string, userId: string, readThrough: string): Promise<void> {
+  const { error } = await supabase.rpc("mark_conversation_read", {
+    p_conversation_id: conversationId,
+    p_read_through: readThrough,
+  });
+  if (error) throw error;
+  await updateStored<ConversationData[]>(userId, conversationsKey, (rows) =>
+    rows.map((row) => row.id === conversationId ? { ...row, unreadCount: 0 } : row));
+}
+
 export async function loadConversations(userId: string, force = false): Promise<ConversationData[]> {
-  return localFirst(userId, "conversations", async () => {
+  return localFirst(userId, conversationsKey, async () => {
   const { data: memberships, error } = await supabase.from("conversation_members")
     .select("conversation_id, conversation:conversations(id, kind, ride_id, direct_user_low, direct_user_high, created_at)")
     .eq("user_id", userId);
@@ -420,16 +442,20 @@ export async function loadConversations(userId: string, force = false): Promise<
     return peerId ? [peerId] : [];
   }))];
   const conversationIds = conversations.map((conversation) => conversation.id);
-  const [ridesResult, peersResult, messagesResult] = await Promise.all([
+  const [ridesResult, peersResult, messagesResult, unreadResult] = await Promise.all([
     rideIds.length ? supabase.from("rides").select("id, title").in("id", rideIds) : Promise.resolve({ data: [], error: null }),
     peerIds.length ? supabase.from("profiles").select("id, display_name").in("id", peerIds) : Promise.resolve({ data: [], error: null }),
     supabase.from("messages").select("conversation_id, body, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
+    supabase.rpc("unread_conversation_counts"),
   ]);
   if (ridesResult.error) throw ridesResult.error;
   if (peersResult.error) throw peersResult.error;
   if (messagesResult.error) throw messagesResult.error;
+  if (unreadResult.error) throw unreadResult.error;
   const rideTitles = new Map((ridesResult.data ?? []).map((ride) => [ride.id, ride.title]));
   const peerNames = new Map((peersResult.data ?? []).map((profile) => [profile.id, profile.display_name]));
+  const unreadCounts = new Map(((unreadResult.data ?? []) as { conversation_id: string; unread_count: number | string }[])
+    .map((row) => [row.conversation_id, Number(row.unread_count)]));
   const latestMessages = new Map<string, { body: string; created_at: string }>();
   for (const message of messagesResult.data ?? []) if (!latestMessages.has(message.conversation_id)) latestMessages.set(message.conversation_id, message);
   return conversations.map((conversation) => ({
@@ -441,6 +467,7 @@ export async function loadConversations(userId: string, force = false): Promise<
     detail: conversation.kind === "ride" ? "Ride group conversation" : "Direct conversation",
     lastMessage: latestMessages.get(conversation.id)?.body ?? "No messages yet",
     updatedAt: latestMessages.get(conversation.id)?.created_at ?? conversation.created_at,
+    unreadCount: unreadCounts.get(conversation.id) ?? 0,
   }));
   }, { force });
 }
@@ -502,7 +529,7 @@ export async function leaveRide(rideId: string, userId: string): Promise<void> {
     updateStored<RideCardData[]>(userId, "user-rides", (rides) => rides.filter((ride) => ride.id !== rideId)),
     updateStored<RideRequestData[]>(userId, "user-ride-requests", (requests) => requests.map((request) => request.rideId === rideId && request.status === "approved" ? { ...request, status: "cancelled" } : request)),
     updateStored<RideParticipantData[]>(userId, `ride-participants:${rideId}`, (people) => people.filter((person) => person.userId !== userId)),
-    updateStored<ConversationData[]>(userId, "conversations", (rows) => rows.filter((row) => row.rideId !== rideId)),
+    updateStored<ConversationData[]>(userId, conversationsKey, (rows) => rows.filter((row) => row.rideId !== rideId)),
   ]);
 }
 
@@ -558,7 +585,7 @@ export async function sendMessage(conversationId: string, senderId: string, body
   if (error) throw error;
   const message: MessageData = { id: data.id, senderId: data.sender_id, body: data.body, createdAt: data.created_at };
   await updateStored<MessageData[]>(senderId, `messages:${conversationId}`, (thread) => thread.some((item) => item.id === message.id) ? thread : [...thread, message]);
-  await updateStored<ConversationData[]>(senderId, "conversations", (rows) => rows.map((row) => row.id === conversationId ? { ...row, lastMessage: message.body, updatedAt: message.createdAt } : row));
+  await updateStored<ConversationData[]>(senderId, conversationsKey, (rows) => rows.map((row) => row.id === conversationId ? { ...row, lastMessage: message.body, updatedAt: message.createdAt } : row));
   return message;
 }
 

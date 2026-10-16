@@ -110,6 +110,7 @@ export function SyncProvider({ children }: PropsWithChildren) {
         tasks.push(...conversations.map((id) => syncMessages(id, activeUserId)));
       }
       if (changed.has("conversation-members")) tasks.push(loadConversations(activeUserId, true));
+      if (changed.has("conversation-reads")) tasks.push(loadConversations(activeUserId, true));
       if (changed.has("notifications")) tasks.push(loadNotifications(activeUserId, true));
 
       const results = await Promise.allSettled(tasks);
@@ -137,6 +138,7 @@ export function SyncProvider({ children }: PropsWithChildren) {
       if (row.conversation_id) enqueueRefresh("messages", row.conversation_id);
     });
     channel.on("postgres_changes", { event: "*", schema: "public", table: "conversation_members", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("conversation-members"));
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "conversation_reads", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("conversation-reads"));
     channel.on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("notifications"));
     channel.subscribe((status, error) => {
       if (__DEV__ && (status === "CHANNEL_ERROR" || status === "TIMED_OUT")) console.warn("[realtime] Subscription unavailable", error);

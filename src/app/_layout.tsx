@@ -38,7 +38,7 @@ function RouteGuard() {
       const data = response.notification.request.content.data ?? {};
       const notificationId = typeof data.notificationId === "string" ? data.notificationId : null;
       if (userId && notificationId) {
-        void markNotificationRead(userId, notificationId)
+        void markNotificationRead(userId, notificationId, typeof data.type === "string" ? data.type : "")
           .catch((error: unknown) => console.warn("[notifications] Could not mark push as read", error));
       }
       router.push(notificationHref(data));
@@ -70,6 +70,7 @@ function RouteGuard() {
       <Stack.Screen name="account/index" options={{ presentation: "modal" }} />
       <Stack.Screen name="account/settings" options={{ presentation: "modal" }} />
       <Stack.Screen name="notifications" options={{ presentation: "modal" }} />
+      <Stack.Screen name="notifications/[group]" />
     </Stack>
   );
 }

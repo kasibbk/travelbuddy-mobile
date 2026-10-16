@@ -4,7 +4,7 @@ import { ArrowLeft, Bell, CheckCheck } from "lucide-react-native";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../components/auth-provider";
 import { colors } from "../components/theme";
-import { getPushPermissionStatus, loadNotifications, markAllNotificationsRead, markNotificationRead, NotificationData, notificationHref, registerPushNotifications } from "../lib/notifications";
+import { getPushPermissionStatus, loadNotifications, markAllNotificationsRead, markNotificationRead, NotificationData, notificationGroupForType, notificationHref, notificationGroups, notificationRequiresAction, registerPushNotifications } from "../lib/notifications";
 import { useStoreVersion } from "../lib/store-events";
 
 export default function NotificationsScreen() {
@@ -79,7 +79,8 @@ export default function NotificationsScreen() {
     setError("");
     try {
       await markAllNotificationsRead(userId);
-      setNotifications((rows) => rows.map((row) => row.readAt ? row : { ...row, readAt: new Date().toISOString() }));
+      setNotifications((rows) => rows.map((row) =>
+        row.readAt || notificationRequiresAction(row.type) ? row : { ...row, readAt: new Date().toISOString() }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not mark notifications as read.");
     } finally {
@@ -89,9 +90,9 @@ export default function NotificationsScreen() {
 
   async function openNotification(item: NotificationData) {
     if (!userId) return;
-    if (!item.readAt) {
+    if (!item.readAt && !notificationRequiresAction(item.type)) {
       try {
-        await markNotificationRead(userId, item.id);
+        await markNotificationRead(userId, item.id, item.type);
         setNotifications((rows) => rows.map((row) => row.id === item.id ? { ...row, readAt: new Date().toISOString() } : row));
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not mark the notification as read.");
@@ -101,6 +102,12 @@ export default function NotificationsScreen() {
   }
 
   const unreadCount = notifications.filter((item) => !item.readAt).length;
+  const groupedNotifications = notificationGroups.flatMap((group) => {
+    const items = notifications.filter((item) => notificationGroupForType(item.type).key === group.key);
+    if (!items.length) return [];
+    const unread = items.filter((item) => !item.readAt);
+    return [{ ...group, items, preview: unread.length ? unread.slice(0, 5) : items.slice(0, 2) }];
+  });
 
   return <View style={styles.screen}>
     <View style={styles.header}>
@@ -116,12 +123,18 @@ export default function NotificationsScreen() {
     {!!pushMessage && <Text accessibilityRole="alert" style={styles.pushMessage}>{pushMessage}</Text>}
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : notifications.length === 0
-      ? <View style={styles.empty}><Bell color={colors.subtle} size={24} /><Text style={styles.emptyTitle}>No notifications yet</Text><Text style={styles.emptyBody}>Activity on your rides and conversations will show up here.</Text></View>
+      ? <View style={styles.empty}><Bell color={colors.subtle} size={24} /><Text style={styles.emptyTitle}>No notifications yet</Text><Text style={styles.emptyBody}>Friend activity and ride updates will show up here.</Text></View>
       : <ScrollView contentContainerStyle={styles.list} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refreshNow()} />}>
-        {notifications.map((item) => <Pressable accessibilityRole="button" key={item.id} onPress={() => void openNotification(item)} style={[styles.item, !item.readAt && styles.unreadItem]}>
-          <View style={[styles.unreadMark, !item.readAt && styles.unreadMarkActive]} />
-          <View style={styles.itemCopy}><Text style={styles.itemTitle}>{item.title}</Text><Text style={styles.itemBody}>{item.body}</Text><Text style={styles.itemTime}>{new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text></View>
-        </Pressable>)}
+        {groupedNotifications.map((group) => <View key={group.key} style={styles.group}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`View all ${group.title.toLowerCase()}`} onPress={() => router.push({ pathname: "/notifications/[group]", params: { group: group.key } })} style={styles.groupHeading}>
+            <Text style={styles.groupTitle}>{group.title}</Text>
+            <Text style={styles.groupAction}>View all ({group.items.length})</Text>
+          </Pressable>
+          {group.preview.map((item) => <Pressable accessibilityRole="button" key={item.id} onPress={() => void openNotification(item)} style={[styles.item, !item.readAt && styles.unreadItem]}>
+            <View style={[styles.unreadMark, !item.readAt && styles.unreadMarkActive]} />
+            <View style={styles.itemCopy}><Text style={styles.itemTitle}>{item.title}</Text><Text style={styles.itemBody}>{item.body}</Text><Text style={styles.itemTime}>{new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</Text></View>
+          </Pressable>)}
+        </View>)}
       </ScrollView>}
   </View>;
 }
@@ -147,7 +160,11 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 36, gap: 9 },
   emptyTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" },
   emptyBody: { color: colors.muted, fontSize: 9, lineHeight: 14, textAlign: "center" },
-  list: { padding: 15, gap: 8 },
+  list: { padding: 15, gap: 16 },
+  group: { gap: 8 },
+  groupHeading: { minHeight: 30, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  groupTitle: { color: colors.muted, fontSize: 9, fontWeight: "800", letterSpacing: 0.6, textTransform: "uppercase" },
+  groupAction: { color: colors.forest, fontSize: 8, fontWeight: "800" },
   item: { minHeight: 77, padding: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: "row", alignItems: "flex-start", gap: 9 },
   unreadItem: { borderColor: "#DCE6D1", backgroundColor: "#F9FBF6" },
   unreadMark: { width: 7, height: 7, marginTop: 4, borderRadius: 4, backgroundColor: "transparent" },

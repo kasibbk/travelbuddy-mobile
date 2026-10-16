@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MessageCircle, MoreHorizontal, Send } from "lucide-react-native";
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
+import { setForegroundConversation } from "../../lib/notifications";
 import { EmptyState } from "../../components/empty-state";
 import { Avatar } from "../../components/avatar";
 import { colors } from "../../components/theme";
-import { ConversationData, loadConversationParticipants, loadConversations, loadMessages, MessageData, sendMessage, syncMessages } from "../../lib/app-data";
+import { ConversationData, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MessageData, sendMessage, setConversationActive, syncMessages } from "../../lib/app-data";
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function ChatScreen() {
   const [senderNames, setSenderNames] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [sendError, setSendError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -70,12 +72,51 @@ export default function ChatScreen() {
     return () => cancelAnimationFrame(frame);
   }, [loading, messages.length]);
 
+  const conversationId = conversation?.id;
+  const lastMessageAt = messages[messages.length - 1]?.createdAt;
+  useEffect(() => {
+    if (loading || !conversationId || !userId || !lastMessageAt) return;
+    void markConversationRead(conversationId, userId, lastMessageAt)
+      .catch((cause: unknown) => console.warn("[chat] Could not mark messages as read", cause));
+  }, [conversationId, lastMessageAt, loading, userId]);
+
   useEffect(() => {
     const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardVisible(true);
       requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
     });
-    return () => subscription.remove();
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    return () => {
+      subscription.remove();
+      hideSubscription.remove();
+    };
   }, []);
+
+  useFocusEffect(useCallback(() => {
+    if (!ready || !userId || !id || Array.isArray(id)) return;
+    setForegroundConversation(id);
+    return () => setForegroundConversation(null);
+  }, [ready, userId, id]));
+
+  useFocusEffect(useCallback(() => {
+    if (!ready || !userId || !id || Array.isArray(id) || conversation?.id !== id) return;
+    const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const updatePresence = (active: boolean) => {
+      void setConversationActive(id, sessionId, active)
+        .catch((cause: unknown) => console.warn("[chat] Could not update active conversation presence", cause));
+    };
+    updatePresence(AppState.currentState === "active");
+    const appStateSubscription = AppState.addEventListener("change", (state) => updatePresence(state === "active"));
+    const heartbeat = setInterval(() => {
+      if (AppState.currentState === "active") updatePresence(true);
+    }, 15_000);
+    return () => {
+      clearInterval(heartbeat);
+      appStateSubscription.remove();
+      void setConversationActive(id, sessionId, false)
+        .catch((cause: unknown) => console.warn("[chat] Could not clear active conversation presence", cause));
+    };
+  }, [ready, userId, id, conversation?.id]));
 
   const title = routeTitle || conversation?.title || "Conversation";
   const initials = title.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();

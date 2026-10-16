@@ -15,16 +15,77 @@ export type NotificationData = {
   readAt: string | null;
 };
 
+export type NotificationGroup = { key: string; title: string; types: readonly string[] };
+
+export const notificationGroups: NotificationGroup[] = [
+  { key: "friend-requests", title: "Friend requests", types: ["friend_request"] },
+  { key: "friend-updates", title: "Friend updates", types: ["friend_accepted", "friend_declined"] },
+  { key: "ride-requests", title: "Ride requests", types: ["ride_request"] },
+  { key: "ride-request-updates", title: "Ride request updates", types: ["ride_request_update", "ride_request_cancelled"] },
+  { key: "ride-updates", title: "Ride updates", types: ["ride_update"] },
+  { key: "ride-admin", title: "Ride admin", types: ["ride_admin"] },
+];
+
 const notificationsKey = "notifications";
+let foregroundConversationId: string | null = null;
+
+export function setForegroundConversation(conversationId: string | null): void {
+  foregroundConversationId = conversationId;
+}
+
+export function notificationRequiresAction(type: string): boolean {
+  return type === "friend_request" || type === "ride_request";
+}
+
+export function notificationGroupForType(type: string): NotificationGroup {
+  return notificationGroups.find((group) => group.types.includes(type)) ?? {
+    key: "other",
+    title: "Other updates",
+    types: [],
+  };
+}
+
+export async function loadNotificationHistory(userId: string, groupKey: string): Promise<NotificationData[]> {
+  const group = notificationGroups.find((item) => item.key === groupKey);
+  if (!group) throw new Error("This notification category is unavailable.");
+
+  const pageSize = 500;
+  const history: NotificationData[] = [];
+  for (let start = 0; ; start += pageSize) {
+    const { data, error } = await supabase.from("notifications")
+      .select("id, type, title, body, data, created_at, read_at")
+      .eq("user_id", userId)
+      .in("type", [...group.types])
+      .order("created_at", { ascending: false })
+      .range(start, start + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []).map((row) => mapNotification(row));
+    history.push(...page);
+    if (page.length < pageSize) return history;
+  }
+}
+
+export async function loadUnreadNotificationCounts(): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc("unread_notification_counts");
+  if (error) throw error;
+  return Object.fromEntries(((data ?? []) as { notification_type: string; unread_count: number | string }[])
+    .map((row) => [row.notification_type, Number(row.unread_count)]));
+}
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
+    handleNotification: async (notification) => {
+      const data = notification.request.content.data ?? {};
+      const isActiveChatMessage = data.type === "message"
+        && typeof data.conversationId === "string"
+        && data.conversationId === foregroundConversationId;
+      return {
+        shouldPlaySound: !isActiveChatMessage,
+        shouldSetBadge: false,
+        shouldShowBanner: !isActiveChatMessage,
+        shouldShowList: !isActiveChatMessage,
+      };
+    },
   });
 }
 
@@ -54,18 +115,25 @@ function mapNotification(row: {
 }
 
 export async function loadNotifications(userId: string, force = false): Promise<NotificationData[]> {
-  return localFirst(userId, notificationsKey, async () => {
+  const cached = await localFirst(userId, notificationsKey, async () => {
     const { data, error } = await supabase.from("notifications")
       .select("id, type, title, body, data, created_at, read_at")
       .eq("user_id", userId)
+      .neq("type", "message")
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw error;
     return (data ?? []).map((row) => mapNotification(row));
   }, { force });
+  const visible = cached.filter((item) => item.type !== "message");
+  if (visible.length !== cached.length) {
+    await updateStored<NotificationData[]>(userId, notificationsKey, () => visible);
+  }
+  return visible;
 }
 
-export async function markNotificationRead(userId: string, notificationId: string): Promise<void> {
+export async function markNotificationRead(userId: string, notificationId: string, type: string): Promise<void> {
+  if (notificationRequiresAction(type)) return;
   const readAt = new Date().toISOString();
   const { error } = await supabase.from("notifications")
     .update({ read_at: readAt })
@@ -73,8 +141,9 @@ export async function markNotificationRead(userId: string, notificationId: strin
     .eq("user_id", userId)
     .is("read_at", null);
   if (error) throw error;
-  await updateStored<NotificationData[]>(userId, notificationsKey, (rows) => rows.map((row) =>
-    row.id === notificationId ? { ...row, readAt } : row));
+  await updateStored<NotificationData[]>(userId, notificationsKey, (rows) => rows
+    .filter((row) => row.type !== "message")
+    .map((row) => row.id === notificationId ? { ...row, readAt } : row));
 }
 
 export async function markAllNotificationsRead(userId: string): Promise<void> {
@@ -82,10 +151,13 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
   const { error } = await supabase.from("notifications")
     .update({ read_at: readAt })
     .eq("user_id", userId)
+    .neq("type", "message")
+    .not("type", "in", "(friend_request,ride_request)")
     .is("read_at", null);
   if (error) throw error;
   await updateStored<NotificationData[]>(userId, notificationsKey, (rows) =>
-    rows.map((row) => row.readAt ? row : { ...row, readAt }));
+    rows.filter((row) => row.type !== "message").map((row) =>
+      row.readAt || notificationRequiresAction(row.type) ? row : { ...row, readAt }));
 }
 
 export async function getPushPermissionStatus(): Promise<Notifications.PermissionStatus | "unsupported"> {

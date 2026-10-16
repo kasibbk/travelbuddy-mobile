@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
 import { DateTimeField } from "./date-time-field";
@@ -20,6 +20,31 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
   const [capacity, setCapacity] = useState("6");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const formRef = useRef<ScrollView>(null);
+  const focusedFieldY = useRef<number | null>(null);
+  const keyboardVisible = useRef(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      keyboardVisible.current = true;
+      if (focusedFieldY.current !== null) {
+        formRef.current?.scrollTo({ y: Math.max(0, focusedFieldY.current - 16), animated: true });
+      }
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      keyboardVisible.current = false;
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [visible]);
+
+  function focusField(y: number) {
+    focusedFieldY.current = y;
+    if (keyboardVisible.current) formRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -89,19 +114,19 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={[styles.sheet, { paddingBottom: Math.max(Platform.OS === "ios" ? 26 : 16, insets.bottom + 12) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>{rideToEdit ? "KEEP YOUR RIDERS IN THE LOOP" : "MAKE ROOM FOR ADVENTURE"}</Text><Text style={styles.heading}>{rideToEdit ? "Edit ride details" : "Plan a new ride"}</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
-            <Field label="Ride name" value={title} onChangeText={setTitle} placeholder="Name this ride" maxLength={100} />
+          <ScrollView ref={formRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
+            <Field label="Ride name" value={title} onChangeText={setTitle} onFocus={focusField} placeholder="Name this ride" maxLength={100} />
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
-            <Field label="Starting point" value={start} onChangeText={setStart} placeholder="Where to meet" maxLength={160} />
-            <Field label="Destination" value={destination} onChangeText={setDestination} placeholder="Where you're headed" maxLength={160} />
-            <Field label="Description · optional" value={description} onChangeText={setDescription} placeholder="A few details for riders" multiline maxLength={2000} />
+            <Field label="Starting point" value={start} onChangeText={setStart} onFocus={focusField} placeholder="Where to meet" maxLength={160} />
+            <Field label="Destination" value={destination} onChangeText={setDestination} onFocus={focusField} placeholder="Where you're headed" maxLength={160} />
+            <Field label="Description · optional" value={description} onChangeText={setDescription} onFocus={focusField} placeholder="A few details for riders" multiline maxLength={2000} />
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
             <View style={styles.split}><DateTimeField label="Date" mode="date" value={startsAt} onChange={setStartsAt} /><DateTimeField label="Meet-up time" mode="time" value={startsAt} onChange={setStartsAt} /></View>
-            <Field label="Rider limit" value={capacity} onChangeText={(value) => setCapacity(value.replace(/\D/g, "").slice(0, 3))} keyboardType="number-pad" maxLength={3} />
+            <Field label="Rider limit" value={capacity} onChangeText={(value) => setCapacity(value.replace(/\D/g, "").slice(0, 3))} onFocus={focusField} keyboardType="number-pad" maxLength={3} />
             {!rideToEdit && <View style={styles.adminBox}><ShieldCheck color={colors.leaf} size={18} /><View style={styles.adminCopy}><Text style={styles.adminTitle}>Ride admin</Text><Text style={styles.adminText}>You’ll be assigned as the ride owner.</Text></View></View>}
             {!!error && <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>}
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting }} disabled={submitting} style={[styles.primaryButton, submitting && styles.submittingButton]} onPress={submitRide}>{submitting ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>{rideToEdit ? "Save changes" : "Create ride"}</Text>}</Pressable>
@@ -112,8 +137,9 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
   );
 }
 
-function Field({ label, style, ...inputProps }: React.ComponentProps<typeof TextInput> & { label: string }) {
-  return <View style={[styles.field, style]}><Text style={styles.label}>{label}</Text><TextInput {...inputProps} style={styles.input} placeholderTextColor={colors.subtle} /></View>;
+function Field({ label, style, onFocus, ...inputProps }: Omit<React.ComponentProps<typeof TextInput>, "onFocus"> & { label: string; onFocus?: (y: number) => void }) {
+  const fieldY = useRef(0);
+  return <View onLayout={(event) => { fieldY.current = event.nativeEvent.layout.y; }} style={[styles.field, style]}><Text style={styles.label}>{label}</Text><TextInput {...inputProps} onFocus={() => onFocus?.(fieldY.current)} style={styles.input} placeholderTextColor={colors.subtle} /></View>;
 }
 
 const styles = StyleSheet.create({
