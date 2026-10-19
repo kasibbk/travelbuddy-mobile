@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowLeft, Bike, ChevronRight, LocateFixed, LogOut, MapPin, ShieldCheck, UserRound } from "lucide-react-native";
@@ -27,6 +27,11 @@ export default function ProfileScreen() {
   const [error, setError] = useState("");
   const [locationError, setLocationError] = useState("");
   const [notice, setNotice] = useState("");
+  const [focusedFieldY, setFocusedFieldY] = useState<number | null>(null);
+  const profileCardY = useRef(0);
+  const displayNameY = useRef(0);
+  const homeCityY = useRef(0);
+  const bioY = useRef(0);
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -132,15 +137,15 @@ export default function ProfileScreen() {
   }
 
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() ?? "";
-  return <PageShell refreshing={refreshing} onRefresh={refreshProfile}>
+  return <PageShell refreshing={refreshing} onRefresh={refreshProfile} focusedFieldY={focusedFieldY}>
     <View style={styles.topbar}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><View style={styles.brandMark}><Bike color={colors.lime} size={17} /></View><Text style={styles.topTitle}>Your profile</Text><View style={{ flex: 1 }} /></View>
     <View style={styles.heading}><Text style={styles.eyebrow}>YOUR CORNER OF THE MAP</Text><Text style={styles.title}>Your profile</Text><Text style={styles.subtitle}>Manage your details and nearby discovery.</Text></View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !profile ? <EmptyState icon={UserRound} title="Profile couldn’t load" description={error} /> : profile ? <>
-      <View style={styles.profileCard}>
+      <View onLayout={(event) => { profileCardY.current = event.nativeEvent.layout.y; }} style={styles.profileCard}>
         <View style={styles.identity}><Avatar initials={initials || "R"} size={50} /><View style={styles.identityText}><Text style={styles.name}>{profile.displayName}</Text><Text style={styles.member}>{userEmail ?? "Signed-in rider"}</Text></View></View>
-        <Text style={styles.label}>YOUR NAME</Text><TextInput value={displayName} onChangeText={setDisplayName} autoComplete="name" maxLength={60} style={styles.input} />
-        <Text style={styles.label}>HOME CITY</Text><View style={styles.cityField}><MapPin color={colors.leaf} size={14} /><TextInput value={homeCity} onChangeText={setHomeCity} placeholder="Add your city" placeholderTextColor={colors.subtle} maxLength={100} style={styles.cityInput} /></View>
-        <Text style={styles.label}>ABOUT</Text><TextInput value={bio} onChangeText={setBio} placeholder="A little about your rides" placeholderTextColor={colors.subtle} multiline maxLength={500} style={[styles.input, styles.bioInput]} />
+        <Text style={styles.label}>YOUR NAME</Text><View onLayout={(event) => { displayNameY.current = event.nativeEvent.layout.y; }}><TextInput value={displayName} onFocus={() => setFocusedFieldY(profileCardY.current + displayNameY.current)} onChangeText={setDisplayName} autoComplete="name" maxLength={60} style={styles.input} /></View>
+        <Text style={styles.label}>HOME CITY</Text><View onLayout={(event) => { homeCityY.current = event.nativeEvent.layout.y; }} style={styles.cityField}><MapPin color={colors.leaf} size={14} /><TextInput value={homeCity} onFocus={() => setFocusedFieldY(profileCardY.current + homeCityY.current)} onChangeText={setHomeCity} placeholder="Add your city" placeholderTextColor={colors.subtle} maxLength={100} style={styles.cityInput} /></View>
+        <Text style={styles.label}>ABOUT</Text><View onLayout={(event) => { bioY.current = event.nativeEvent.layout.y; }}><TextInput value={bio} onFocus={() => setFocusedFieldY(profileCardY.current + bioY.current)} onChangeText={setBio} placeholder="A little about your rides" placeholderTextColor={colors.subtle} multiline maxLength={500} style={[styles.input, styles.bioInput]} /></View>
         <Text style={styles.label}>RIDING PACE</Text><View style={styles.paceChoices}>{(["easy", "social", "steady", "fast"] as const).map((pace) => <Pressable key={pace} accessibilityRole="radio" accessibilityState={{ checked: ridingPace === pace }} onPress={() => setRidingPace(pace)} style={[styles.paceChoice, ridingPace === pace && styles.paceChoiceActive]}><Text style={[styles.paceText, ridingPace === pace && styles.paceTextActive]}>{pace[0].toUpperCase() + pace.slice(1)}</Text></Pressable>)}</View>
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}

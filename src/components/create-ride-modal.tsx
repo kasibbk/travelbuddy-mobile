@@ -114,11 +114,11 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
         <View style={[styles.sheet, { paddingBottom: Math.max(Platform.OS === "ios" ? 26 : 16, insets.bottom + 12) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}><View><Text style={styles.eyebrow}>{rideToEdit ? "KEEP YOUR RIDERS IN THE LOOP" : "MAKE ROOM FOR ADVENTURE"}</Text><Text style={styles.heading}>{rideToEdit ? "Edit ride details" : "Plan a new ride"}</Text></View><Pressable accessibilityLabel="Close" disabled={submitting} style={styles.closeButton} onPress={onClose}><X color={colors.muted} size={19} /></Pressable></View>
-          <ScrollView ref={formRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
+          <ScrollView ref={formRef} automaticallyAdjustKeyboardInsets={Platform.OS === "ios"} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
             <Field label="Ride name" value={title} onChangeText={setTitle} onFocus={focusField} placeholder="Name this ride" maxLength={100} />
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
             <Field label="Starting point" value={start} onChangeText={setStart} onFocus={focusField} placeholder="Where to meet" maxLength={160} />

@@ -11,6 +11,8 @@ import { Avatar } from "../../components/avatar";
 import { colors } from "../../components/theme";
 import { ConversationData, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MessageData, sendMessage, setConversationActive, syncMessages } from "../../lib/app-data";
 
+const COMPOSER_FIELD_MIN_HEIGHT = 42;
+
 export default function ChatScreen() {
   const router = useRouter();
   const { id, title: routeTitle } = useLocalSearchParams<{ id: string; title?: string }>();
@@ -147,7 +149,7 @@ export default function ChatScreen() {
         return <View key={message.id} style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}>{senderName && <Text style={styles.senderName}>{senderName}</Text>}<Text style={styles.message}>{message.body}</Text><Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text></View>;
       }) : <EmptyState icon={MessageCircle} title="No messages yet" description="Messages for this conversation will appear here." />}
     </ScrollView>
-    {!!conversation && !error && !loading && <View style={[styles.composer, { paddingBottom: Math.max(10, insets.bottom) }]}><View style={styles.composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: !draft.trim() || sending }} disabled={!draft.trim() || sending} onPress={submitMessage} style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable>{!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}</View>}
+    {!!conversation && !error && !loading && <View style={[styles.composer, { paddingBottom: keyboardVisible ? 10 + COMPOSER_FIELD_MIN_HEIGHT * 0.6 : Math.max(10, insets.bottom) }]}><View style={styles.composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: !draft.trim() || sending }} disabled={!draft.trim() || sending} onPress={submitMessage} style={[styles.sendButton, (!draft.trim() || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable>{!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}</View>}
   </KeyboardAvoidingView>;
 }
 
@@ -164,7 +166,7 @@ const styles = StyleSheet.create({
   messages: { flex: 1 },
   messageContent: { flexGrow: 1, gap: 13, padding: 16, paddingBottom: 24 },
   composer: { paddingHorizontal: 12, paddingTop: 9, paddingBottom: Platform.OS === "ios" ? 20 : 10, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.surface, flexDirection: "row", alignItems: "flex-end", gap: 8, flexWrap: "wrap" },
-  composerField: { flex: 1, minHeight: 42, maxHeight: 120, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.paper, justifyContent: "center" },
+  composerField: { flex: 1, minHeight: COMPOSER_FIELD_MIN_HEIGHT, maxHeight: 120, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.paper, justifyContent: "center" },
   composerInput: { minHeight: 24, maxHeight: 100, paddingVertical: 6, color: colors.ink, fontSize: 10, lineHeight: 15 },
   sendButton: { width: 42, height: 42, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   sendButtonDisabled: { opacity: 0.5 },
