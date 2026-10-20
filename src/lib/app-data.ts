@@ -3,7 +3,7 @@ import { localFirst } from "./local-first";
 import { readStored, updateStored, writeStored } from "./local-store";
 import { loadNotifications } from "./notifications";
 
-const conversationsKey = "conversations-v2";
+const conversationsKey = "conversations-v4";
 
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
 async function refreshStored(...tasks: Promise<unknown>[]): Promise<void> {
@@ -115,15 +115,20 @@ export type ConversationData = {
   title: string;
   detail: string;
   lastMessage: string;
+  lastMessageSender: string | null;
+  lastMessageStatus: MessageDeliveryStatus | null;
   updatedAt: string;
   unreadCount: number;
 };
+
+export type MessageDeliveryStatus = "sent" | "delivered" | "read";
 
 export type MessageData = {
   id: string;
   senderId: string;
   body: string;
   createdAt: string;
+  deliveryStatus?: MessageDeliveryStatus;
 };
 
 export type ProfileData = {
@@ -423,6 +428,51 @@ export async function markConversationRead(conversationId: string, userId: strin
     rows.map((row) => row.id === conversationId ? { ...row, unreadCount: 0 } : row));
 }
 
+async function loadMessageDeliveryStatuses(userId: string, messageIds: string[]): Promise<Map<string, MessageDeliveryStatus>> {
+  if (!messageIds.length) return new Map();
+  const statuses = new Map<string, MessageDeliveryStatus>();
+  for (let offset = 0; offset < messageIds.length; offset += 200) {
+    const { data, error } = await supabase.from("message_receipts")
+      .select("message_id, recipient_id, delivered_at, read_at")
+      .eq("sender_id", userId)
+      .in("message_id", messageIds.slice(offset, offset + 200));
+    if (error) throw error;
+    const counts = new Map<string, { recipients: number; delivered: number; read: number }>();
+    for (const receipt of data ?? []) {
+      const count = counts.get(receipt.message_id) ?? { recipients: 0, delivered: 0, read: 0 };
+      count.recipients += 1;
+      if (receipt.delivered_at) count.delivered += 1;
+      if (receipt.read_at) count.read += 1;
+      counts.set(receipt.message_id, count);
+    }
+    for (const [messageId, count] of counts) {
+      statuses.set(messageId, count.read === count.recipients && count.recipients > 0
+        ? "read"
+        : count.delivered === count.recipients && count.recipients > 0 ? "delivered" : "sent");
+    }
+  }
+  return statuses;
+}
+
+async function acknowledgeMessagesDelivered(conversationId: string, userId: string, messages: MessageData[]): Promise<void> {
+  const messageIds = messages.filter((message) => message.senderId !== userId).map((message) => message.id);
+  for (let offset = 0; offset < messageIds.length; offset += 200) {
+    const { error } = await supabase.rpc("acknowledge_messages_delivered", {
+      p_conversation_id: conversationId,
+      p_message_ids: messageIds.slice(offset, offset + 200),
+    });
+    if (error) throw error;
+  }
+}
+
+async function addDeliveryStatuses(userId: string, messages: MessageData[]): Promise<MessageData[]> {
+  const outgoing = messages.filter((message) => message.senderId === userId);
+  const statuses = await loadMessageDeliveryStatuses(userId, outgoing.map((message) => message.id));
+  return messages.map((message) => message.senderId === userId
+    ? { ...message, deliveryStatus: statuses.get(message.id) ?? "sent" }
+    : message);
+}
+
 export async function loadConversations(userId: string, force = false): Promise<ConversationData[]> {
   return localFirst(userId, conversationsKey, async () => {
   const { data: memberships, error } = await supabase.from("conversation_members")
@@ -436,7 +486,7 @@ export async function loadConversations(userId: string, force = false): Promise<
   if (conversations.length === 0) return [];
 
   const rideIds = conversations.flatMap((conversation) => conversation.ride_id ? [conversation.ride_id] : []);
-  const peerIds = [...new Set(conversations.flatMap((conversation) => {
+  const directPeerIds = [...new Set(conversations.flatMap((conversation) => {
     if (conversation.kind !== "direct") return [];
     const peerId = conversation.direct_user_low === userId ? conversation.direct_user_high : conversation.direct_user_low;
     return peerId ? [peerId] : [];
@@ -444,8 +494,8 @@ export async function loadConversations(userId: string, force = false): Promise<
   const conversationIds = conversations.map((conversation) => conversation.id);
   const [ridesResult, peersResult, messagesResult, unreadResult] = await Promise.all([
     rideIds.length ? supabase.from("rides").select("id, title").in("id", rideIds) : Promise.resolve({ data: [], error: null }),
-    peerIds.length ? supabase.from("profiles").select("id, display_name").in("id", peerIds) : Promise.resolve({ data: [], error: null }),
-    supabase.from("messages").select("conversation_id, body, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
+    directPeerIds.length ? supabase.from("profiles").select("id, display_name").in("id", directPeerIds) : Promise.resolve({ data: [], error: null }),
+    supabase.from("messages").select("id, conversation_id, sender_id, body, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
     supabase.rpc("unread_conversation_counts"),
   ]);
   if (ridesResult.error) throw ridesResult.error;
@@ -456,8 +506,36 @@ export async function loadConversations(userId: string, force = false): Promise<
   const peerNames = new Map((peersResult.data ?? []).map((profile) => [profile.id, profile.display_name]));
   const unreadCounts = new Map(((unreadResult.data ?? []) as { conversation_id: string; unread_count: number | string }[])
     .map((row) => [row.conversation_id, Number(row.unread_count)]));
-  const latestMessages = new Map<string, { body: string; created_at: string }>();
+  const latestMessages = new Map<string, { id: string; sender_id: string; body: string; created_at: string }>();
   for (const message of messagesResult.data ?? []) if (!latestMessages.has(message.conversation_id)) latestMessages.set(message.conversation_id, message);
+  await Promise.all([...latestMessages.entries()]
+    .filter(([, message]) => message.sender_id !== userId)
+    .map(([conversationId, message]) => acknowledgeMessagesDelivered(conversationId, userId, [{
+      id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at,
+    }])));
+  const latestSenderIds = [...new Set([...latestMessages.values()]
+    .map((message) => message.sender_id)
+    .filter((senderId) => senderId !== userId))];
+  const { data: latestSenders, error: senderError } = latestSenderIds.length
+    ? await supabase.from("profiles").select("id, display_name").in("id", latestSenderIds)
+    : { data: [], error: null };
+  if (senderError) throw senderError;
+  const latestSenderNames = new Map((latestSenders ?? []).map((profile) => [profile.id, profile.display_name]));
+  const missingSenderNames = conversations.flatMap((conversation) => {
+    const latest = latestMessages.get(conversation.id);
+    return latest && latest.sender_id !== userId && !latestSenderNames.has(latest.sender_id)
+      ? [{ conversationId: conversation.id, senderId: latest.sender_id }]
+      : [];
+  });
+  const participantSenderNames = await Promise.all(missingSenderNames.map(async ({ conversationId, senderId }) => {
+    const participants = await loadConversationParticipants(conversationId, userId);
+    return [senderId, participants.find((participant) => participant.userId === senderId)?.displayName] as const;
+  }));
+  for (const [senderId, name] of participantSenderNames) if (name) latestSenderNames.set(senderId, name);
+  const ownLatestMessageIds = [...latestMessages.entries()]
+    .filter(([, message]) => message.sender_id === userId)
+    .map(([, message]) => message);
+  const latestDeliveryStatuses = await loadMessageDeliveryStatuses(userId, ownLatestMessageIds.map((message) => message.id));
   return conversations.map((conversation) => ({
     id: conversation.id,
     kind: conversation.kind,
@@ -466,9 +544,17 @@ export async function loadConversations(userId: string, force = false): Promise<
     title: conversation.kind === "ride" && conversation.ride_id ? rideTitles.get(conversation.ride_id) ?? "Ride chat" : peerNames.get(conversation.direct_user_low === userId ? conversation.direct_user_high ?? "" : conversation.direct_user_low ?? "") ?? "Friend chat",
     detail: conversation.kind === "ride" ? "Ride group conversation" : "Direct conversation",
     lastMessage: latestMessages.get(conversation.id)?.body ?? "No messages yet",
+    lastMessageSender: !latestMessages.has(conversation.id) ? null
+      : latestMessages.get(conversation.id)?.sender_id === userId ? "You"
+        : latestSenderNames.get(latestMessages.get(conversation.id)?.sender_id ?? "")
+          ?? peerNames.get(latestMessages.get(conversation.id)?.sender_id ?? "")
+          ?? "Rider",
+    lastMessageStatus: latestMessages.get(conversation.id)?.sender_id === userId
+      ? latestDeliveryStatuses.get(latestMessages.get(conversation.id)?.id ?? "") ?? "sent"
+      : null,
     updatedAt: latestMessages.get(conversation.id)?.created_at ?? conversation.created_at,
     unreadCount: unreadCounts.get(conversation.id) ?? 0,
-  }));
+  })).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, { force });
 }
 
@@ -552,7 +638,7 @@ export async function loadSharedActiveRides(otherUserId: string, userId: string,
 }
 
 export async function loadMessages(conversationId: string, userId: string, force = false): Promise<MessageData[]> {
-  return localFirst(userId, `messages:${conversationId}`, async () => {
+  const messages = await localFirst(userId, `messages:${conversationId}`, async () => {
     const { data, error } = await supabase.from("messages")
       .select("id, sender_id, body, created_at")
       .eq("conversation_id", conversationId)
@@ -560,6 +646,17 @@ export async function loadMessages(conversationId: string, userId: string, force
     if (error) throw error;
     return (data ?? []).map((message) => ({ id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at }));
   }, { force });
+  try {
+    await acknowledgeMessagesDelivered(conversationId, userId, messages);
+    const updated = await addDeliveryStatuses(userId, messages);
+    if (JSON.stringify(updated) !== JSON.stringify(messages)) {
+      await writeStored(userId, `messages:${conversationId}`, updated);
+    }
+    return updated;
+  } catch (error) {
+    console.warn("[chat] Could not refresh message delivery status", error);
+    return messages;
+  }
 }
 
 // Fetches only messages newer than what is stored and appends them.
@@ -571,10 +668,14 @@ export async function syncMessages(conversationId: string, userId: string): Prom
   if (last) query = query.gte("created_at", last);
   const { data, error } = await query;
   if (error) throw error;
-  if (!data?.length) return;
   const known = new Set(stored.map((message) => message.id));
   const fresh = data.filter((message) => !known.has(message.id)).map((message) => ({ id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at }));
-  if (fresh.length) await writeStored(userId, `messages:${conversationId}`, [...stored, ...fresh].sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
+  const combined = [...stored, ...fresh].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  await acknowledgeMessagesDelivered(conversationId, userId, fresh);
+  const updated = await addDeliveryStatuses(userId, combined);
+  if (JSON.stringify(updated) !== JSON.stringify(stored)) {
+    await writeStored(userId, `messages:${conversationId}`, updated);
+  }
 }
 
 export async function sendMessage(conversationId: string, senderId: string, body: string): Promise<MessageData> {
@@ -583,9 +684,11 @@ export async function sendMessage(conversationId: string, senderId: string, body
     .select("id, sender_id, body, created_at")
     .single();
   if (error) throw error;
-  const message: MessageData = { id: data.id, senderId: data.sender_id, body: data.body, createdAt: data.created_at };
+  const message: MessageData = { id: data.id, senderId: data.sender_id, body: data.body, createdAt: data.created_at, deliveryStatus: "sent" };
   await updateStored<MessageData[]>(senderId, `messages:${conversationId}`, (thread) => thread.some((item) => item.id === message.id) ? thread : [...thread, message]);
-  await updateStored<ConversationData[]>(senderId, conversationsKey, (rows) => rows.map((row) => row.id === conversationId ? { ...row, lastMessage: message.body, updatedAt: message.createdAt } : row));
+  await updateStored<ConversationData[]>(senderId, conversationsKey, (rows) => rows.map((row) => row.id === conversationId
+    ? { ...row, lastMessage: message.body, lastMessageSender: "You", lastMessageStatus: "sent", updatedAt: message.createdAt }
+    : row));
   return message;
 }
 

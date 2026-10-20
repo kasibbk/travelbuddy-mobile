@@ -137,6 +137,10 @@ export function SyncProvider({ children }: PropsWithChildren) {
       const row = payload.new as { conversation_id?: string };
       if (row.conversation_id) enqueueRefresh("messages", row.conversation_id);
     });
+    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "message_receipts", filter: `sender_id=eq.${activeUserId}` }, (payload) => {
+      const row = payload.new as { conversation_id?: string };
+      if (row.conversation_id) enqueueRefresh("messages", row.conversation_id);
+    });
     channel.on("postgres_changes", { event: "*", schema: "public", table: "conversation_members", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("conversation-members"));
     channel.on("postgres_changes", { event: "*", schema: "public", table: "conversation_reads", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("conversation-reads"));
     channel.on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${activeUserId}` }, () => enqueueRefresh("notifications"));
