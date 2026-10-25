@@ -53,11 +53,12 @@ function RouteGuard() {
   }, [isSignedIn, router, userId]);
 
   useEffect(() => {
-    const isAuthRoute = pathname === "/login" || pathname === "/register";
-    const isPublicRoute = pathname === "/" || isAuthRoute;
+    const isSignInRoute = pathname === "/login" || pathname === "/register";
+    const isPublicRoute = pathname === "/" || isSignInRoute || pathname === "/activate"
+      || pathname === "/forgot-password" || pathname === "/reset-password";
     if (!isSignedIn && !isPublicRoute) router.replace("/");
     if (isSignedIn && pathname === "/account") router.replace("/account/settings");
-    if (isSignedIn && isAuthRoute) router.replace("/(tabs)/discover");
+    if (isSignedIn && isSignInRoute) router.replace("/(tabs)/discover");
   }, [isSignedIn, pathname, router]);
 
   return (
@@ -65,6 +66,9 @@ function RouteGuard() {
       <Stack.Screen name="index" />
       <Stack.Screen name="login" />
       <Stack.Screen name="register" />
+      <Stack.Screen name="activate" />
+      <Stack.Screen name="forgot-password" />
+      <Stack.Screen name="reset-password" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="profile/index" options={{ presentation: "modal" }} />
       <Stack.Screen name="account/index" options={{ presentation: "modal" }} />

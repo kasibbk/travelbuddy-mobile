@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ArrowLeft, Bike, ChevronRight, LocateFixed, LogOut, MapPin, ShieldCheck, UserRound } from "lucide-react-native";
+import { ArrowLeft, Bike, ChevronRight, LocateFixed, MapPin, ShieldCheck, UserRound } from "lucide-react-native";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { PageShell } from "../../components/page-shell";
@@ -14,7 +14,7 @@ import type { LocationSearchResult } from "../../services/location/types";
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { ready, userId, userEmail, signOut } = useAuth();
+  const { ready, userId, userEmail } = useAuth();
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [homeCity, setHomeCity] = useState("");
@@ -224,7 +224,6 @@ export default function ProfileScreen() {
       </View>
     </> : <EmptyState icon={UserRound} title="Profile not found" description="This account has no profile record yet. Contact support to restore its profile." />}
     <Pressable style={styles.accountLink} onPress={() => router.push("/account/settings")}><View><Text style={styles.accountTitle}>Account &amp; sign-in</Text><Text style={styles.accountSubtitle}>{userEmail ?? "Supabase account"}</Text></View><ChevronRight color={colors.muted} size={18} /></Pressable>
-    <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOut}><LogOut color="#9B684F" size={15} /><Text style={styles.signOutText}>Sign out</Text></Pressable>
   </PageShell>;
 }
 
@@ -237,5 +236,4 @@ const styles = StyleSheet.create({
   loader: { marginVertical: 28 },
   privacyCard: { marginHorizontal: 16, marginTop: 13, padding: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, privacyHeading: { marginBottom: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, cardTitle: { color: colors.ink, fontSize: 12, fontWeight: "700" }, cardSubtitle: { marginTop: 3, color: colors.muted, fontSize: 8, lineHeight: 12 }, settingRow: { minHeight: 55, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, settingCopy: { flex: 1, gap: 3 }, settingTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, settingDetail: { color: colors.muted, fontSize: 7, lineHeight: 11 }, locationRow: { minHeight: 52, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, locationIcon: { width: 28, height: 28, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen }, locationCopy: { flex: 1, gap: 3 }, locationButton: { minHeight: 38, marginTop: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.paleGreen }, locationButtonText: { color: colors.forest, fontSize: 9, fontWeight: "700" }, removeButton: { minHeight: 33, marginTop: 4, alignItems: "center", justifyContent: "center" }, removeText: { color: "#9B684F", fontSize: 8, fontWeight: "700" },
   accountLink: { minHeight: 59, marginHorizontal: 16, marginTop: 13, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, accountTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, accountSubtitle: { marginTop: 4, color: colors.muted, fontSize: 8 },
-  signOut: { minHeight: 42, marginHorizontal: 20, marginTop: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, signOutText: { color: "#9B684F", fontSize: 9, fontWeight: "700" },
 });
