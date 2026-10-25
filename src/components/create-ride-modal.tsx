@@ -1,21 +1,38 @@
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "expo-router";
 import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
 import { DateTimeField } from "./date-time-field";
 import { useAuth } from "./auth-provider";
 import { createRide, RideCardData, updateRideDetails } from "../lib/app-data";
+import { beginRideLocationSelection } from "../services/location/picker";
+import type { AppCoords } from "../services/location/types";
 import { colors } from "./theme";
 
-type CreateRideModalProps = { visible: boolean; onClose: () => void; onCreated: (ride: RideCardData) => void; ride?: RideCardData; onUpdated?: (ride: RideCardData) => void };
+type CreateRideModalProps = { visible: boolean; onClose: () => void; onOpen?: () => void; onCreated: (ride: RideCardData) => void; ride?: RideCardData; onUpdated?: (ride: RideCardData) => void };
 
-export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit, onUpdated }: CreateRideModalProps) {
+function getErrorMessage(cause: unknown, fallback: string): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "object" && cause !== null && "message" in cause && typeof cause.message === "string") {
+    const details = "details" in cause && typeof cause.details === "string" ? cause.details : "";
+    const hint = "hint" in cause && typeof cause.hint === "string" ? cause.hint : "";
+    return [cause.message, details, hint].filter(Boolean).join(" ");
+  }
+  return fallback;
+}
+
+export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rideToEdit, onUpdated }: CreateRideModalProps) {
+  const router = useRouter();
   const { userId } = useAuth();
   const insets = useSafeAreaInsets();
+  const rideToEditRef = useRef(rideToEdit);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [start, setStart] = useState("");
   const [destination, setDestination] = useState("");
+  const [startCoords, setStartCoords] = useState<AppCoords | undefined>();
+  const [destinationCoords, setDestinationCoords] = useState<AppCoords | undefined>();
   const [startsAt, setStartsAt] = useState<Date | null>(null);
   const [capacity, setCapacity] = useState("6");
   const [submitting, setSubmitting] = useState(false);
@@ -23,6 +40,11 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
   const formRef = useRef<ScrollView>(null);
   const focusedFieldY = useRef<number | null>(null);
   const keyboardVisible = useRef(false);
+  const resumeAfterLocationPicker = useRef(false);
+
+  useEffect(() => {
+    rideToEditRef.current = rideToEdit;
+  }, [rideToEdit]);
 
   useEffect(() => {
     if (!visible) return;
@@ -46,26 +68,52 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
     if (keyboardVisible.current) formRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
   }
 
+  function chooseLocation(field: "start" | "destination") {
+    resumeAfterLocationPicker.current = true;
+    beginRideLocationSelection((label, coords) => {
+      if (field === "start") {
+        setStart(label);
+        setStartCoords(coords);
+      } else {
+        setDestination(label);
+        setDestinationCoords(coords);
+      }
+      onOpen?.();
+    }, () => onOpen?.());
+    onClose();
+    router.push({ pathname: "/location-picker", params: { field } });
+  }
+
   useEffect(() => {
     if (!visible) return;
-    if (rideToEdit) {
-      const [startLabel = "", destinationLabel = ""] = rideToEdit.route.split(" → ");
-      setTitle(rideToEdit.title);
-      setDescription(rideToEdit.description);
+    if (resumeAfterLocationPicker.current) {
+      resumeAfterLocationPicker.current = false;
+      setError("");
+      return;
+    }
+    const rideAtOpen = rideToEditRef.current;
+    if (rideAtOpen) {
+      const [startLabel = "", destinationLabel = ""] = rideAtOpen.route.split(" → ");
+      setTitle(rideAtOpen.title);
+      setDescription(rideAtOpen.description);
       setStart(startLabel);
       setDestination(destinationLabel);
-      setStartsAt(new Date(rideToEdit.startsAt));
-      setCapacity(String(rideToEdit.capacity));
+      setStartCoords(rideAtOpen.startCoords ?? undefined);
+      setDestinationCoords(rideAtOpen.destinationCoords ?? undefined);
+      setStartsAt(new Date(rideAtOpen.startsAt));
+      setCapacity(String(rideAtOpen.capacity));
     } else {
       setTitle("");
       setDescription("");
       setStart("");
       setDestination("");
+      setStartCoords(undefined);
+      setDestinationCoords(undefined);
       setStartsAt(null);
       setCapacity("6");
     }
     setError("");
-  }, [visible, rideToEdit]);
+  }, [visible]);
 
   async function submitRide() {
     setError("");
@@ -92,6 +140,8 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
           destinationLabel: destination.trim(),
           startsAt: startsAt.toISOString(),
           capacity: capacityNumber,
+          startCoords,
+          destinationCoords,
         })
         : await createRide({
           creatorId: userId,
@@ -101,12 +151,14 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
           destinationLabel: destination.trim(),
           startsAt: startsAt.toISOString(),
           capacity: capacityNumber,
+          startCoords,
+          destinationCoords,
         });
       if (rideToEdit) onUpdated?.(ride);
       else onCreated(ride);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : rideToEdit ? "Could not save ride changes." : "Could not create the ride.");
+      setError(getErrorMessage(cause, rideToEdit ? "Could not save ride changes." : "Could not create the ride."));
     } finally {
       setSubmitting(false);
     }
@@ -121,8 +173,8 @@ export function CreateRideModal({ visible, onClose, onCreated, ride: rideToEdit,
           <ScrollView ref={formRef} automaticallyAdjustKeyboardInsets={Platform.OS === "ios"} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} showsVerticalScrollIndicator={false} contentContainerStyle={styles.form}>
             <Field label="Ride name" value={title} onChangeText={setTitle} onFocus={focusField} placeholder="Name this ride" maxLength={100} />
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
-            <Field label="Starting point" value={start} onChangeText={setStart} onFocus={focusField} placeholder="Where to meet" maxLength={160} />
-            <Field label="Destination" value={destination} onChangeText={setDestination} onFocus={focusField} placeholder="Where you're headed" maxLength={160} />
+            <LocationField label="Starting point" value={start} placeholder="Choose a meeting point on the map" disabled={submitting} onPress={() => chooseLocation("start")} />
+            <LocationField label="Destination" value={destination} placeholder="Choose a destination on the map" disabled={submitting} onPress={() => chooseLocation("destination")} />
             <Field label="Description · optional" value={description} onChangeText={setDescription} onFocus={focusField} placeholder="A few details for riders" multiline maxLength={2000} />
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
             <View style={styles.split}><DateTimeField label="Date" mode="date" value={startsAt} onChange={setStartsAt} /><DateTimeField label="Meet-up time" mode="time" value={startsAt} onChange={setStartsAt} /></View>
@@ -142,6 +194,16 @@ function Field({ label, style, onFocus, ...inputProps }: Omit<React.ComponentPro
   return <View onLayout={(event) => { fieldY.current = event.nativeEvent.layout.y; }} style={[styles.field, style]}><Text style={styles.label}>{label}</Text><TextInput {...inputProps} onFocus={() => onFocus?.(fieldY.current)} style={styles.input} placeholderTextColor={colors.subtle} /></View>;
 }
 
+function LocationField({ label, value, placeholder, disabled, onPress }: { label: string; value: string; placeholder: string; disabled: boolean; onPress: () => void }) {
+  return <View style={styles.field}>
+    <Text style={styles.label}>{label}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value || placeholder}`} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[styles.locationButton, disabled && styles.submittingButton]}>
+      <MapPin color={colors.leaf} size={15} />
+      <Text numberOfLines={2} style={[styles.locationText, !value && styles.locationPlaceholder]}>{value || placeholder}</Text>
+    </Pressable>
+  </View>;
+}
+
 const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#13251FD9" },
   sheet: { maxHeight: "93%", paddingHorizontal: 19, paddingTop: 9, paddingBottom: Platform.OS === "ios" ? 26 : 16, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: colors.paper },
@@ -156,6 +218,9 @@ const styles = StyleSheet.create({
   field: { gap: 6 },
   label: { color: "#66796D", fontSize: 9, fontWeight: "700" },
   input: { minHeight: 43, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface, color: colors.ink, fontSize: 12 },
+  locationButton: { minHeight: 43, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 12, paddingVertical: 9, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface },
+  locationText: { flex: 1, color: colors.ink, fontSize: 11, lineHeight: 15 },
+  locationPlaceholder: { color: colors.subtle },
   split: { flexDirection: "row", gap: 10 },
   half: { flex: 1 },
   adminBox: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 9, backgroundColor: colors.paleGreen },

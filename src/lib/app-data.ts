@@ -2,8 +2,14 @@ import { supabase } from "./supabase";
 import { localFirst } from "./local-first";
 import { readStored, updateStored, writeStored } from "./local-store";
 import { loadNotifications } from "./notifications";
+import { formatRideDistance, formatRideDuration } from "./ride-format";
+import { LocationService } from "../services/location";
+import type { AppCoords, RouteResult } from "../services/location/types";
 
 const conversationsKey = "conversations-v4";
+const openRidesKey = "open-rides-v3";
+const userRidesKey = "user-rides-v3";
+const rideDetailsKey = (rideId: string) => `ride-details-v2:${rideId}`;
 
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
 async function refreshStored(...tasks: Promise<unknown>[]): Promise<void> {
@@ -20,6 +26,7 @@ type RideRow = {
   starts_at: string;
   distance_meters: number | null;
   estimated_duration_minutes: number | null;
+  route_data: unknown;
   capacity: number;
   status: "open" | "cancelled" | "completed";
   creator: { display_name: string } | null;
@@ -32,6 +39,10 @@ export type RideCardData = {
   route: string;
   date: string;
   time: string;
+  distanceMeters: number | null;
+  estimatedDurationMinutes: number | null;
+  startCoords: AppCoords | null;
+  destinationCoords: AppCoords | null;
   distance: string;
   duration: string;
   capacity: number;
@@ -60,6 +71,8 @@ export type SharedRideData = {
   title: string;
   route: string;
   startsAt: string;
+  distance: string;
+  duration: string;
 };
 
 export type AdminRequestData = {
@@ -142,13 +155,26 @@ export type ProfileData = {
 
 export type PublicProfileData = Omit<ProfileData, "discoverable"> & { avatarPath: string | null };
 
-const rideSelect = "id, creator_id, title, description, start_label, destination_label, starts_at, distance_meters, estimated_duration_minutes, capacity, status, creator:profiles!rides_creator_id_fkey(display_name)";
+const rideSelect = "id, creator_id, title, description, start_label, destination_label, starts_at, distance_meters, estimated_duration_minutes, route_data, capacity, status, creator:profiles!rides_creator_id_fkey(display_name)";
+
+function getRouteCoordinates(routeData: unknown): { start: AppCoords; destination: AppCoords } | null {
+  if (typeof routeData !== "object" || routeData === null) return null;
+  const { start, destination } = routeData as { start?: unknown; destination?: unknown };
+  function isCoords(value: unknown): value is AppCoords {
+    if (typeof value !== "object" || value === null) return false;
+    const coords = value as { lat?: unknown; lng?: unknown };
+    return typeof coords.lat === "number" && Number.isFinite(coords.lat)
+      && typeof coords.lng === "number" && Number.isFinite(coords.lng);
+  }
+  return isCoords(start) && isCoords(destination) ? { start, destination } : null;
+}
 
 function mapRide(row: RideRow): RideCardData {
   const startsAt = new Date(row.starts_at);
+  const routeCoordinates = getRouteCoordinates(row.route_data);
   const distance = row.distance_meters === null
     ? "Route distance not set"
-    : `${(row.distance_meters / 1609.344).toFixed(row.distance_meters < 16093 ? 1 : 0)} mi`;
+    : formatRideDistance(row.distance_meters / 1000);
   return {
     id: row.id,
     creatorId: row.creator_id,
@@ -156,8 +182,12 @@ function mapRide(row: RideRow): RideCardData {
     route: `${row.start_label} → ${row.destination_label}`,
     date: startsAt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
     time: startsAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+    distanceMeters: row.distance_meters,
+    estimatedDurationMinutes: row.estimated_duration_minutes,
+    startCoords: routeCoordinates?.start ?? null,
+    destinationCoords: routeCoordinates?.destination ?? null,
     distance,
-    duration: row.estimated_duration_minutes === null ? "Duration not set" : `${row.estimated_duration_minutes} min`,
+    duration: row.estimated_duration_minutes === null ? "Time not set" : formatRideDuration(row.estimated_duration_minutes),
     capacity: row.capacity,
     host: row.creator?.display_name ?? "Ride host",
     description: row.description,
@@ -166,8 +196,21 @@ function mapRide(row: RideRow): RideCardData {
   };
 }
 
+async function calculateRideMetrics(
+  startLabel: string,
+  destinationLabel: string,
+  startCoords?: AppCoords,
+  destinationCoords?: AppCoords,
+): Promise<{ start: AppCoords; destination: AppCoords; route: RouteResult }> {
+  const start = startCoords ?? await LocationService.geocodeAddress(startLabel);
+  if (!start) throw new Error("Could not find the ride starting point on the map.");
+  const destination = destinationCoords ?? await LocationService.geocodeAddress(destinationLabel);
+  if (!destination) throw new Error("Could not find the ride destination on the map.");
+  return { start, destination, route: await LocationService.getRoute(start, destination) };
+}
+
 export async function loadOpenRides(userId: string, force = false): Promise<RideCardData[]> {
-  return localFirst(userId, "open-rides", async () => {
+  return localFirst(userId, openRidesKey, async () => {
     const { data, error } = await supabase.from("rides")
       .select(rideSelect)
       .eq("status", "open")
@@ -187,7 +230,10 @@ export async function createRide(input: {
   destinationLabel: string;
   startsAt: string;
   capacity: number;
+  startCoords?: AppCoords;
+  destinationCoords?: AppCoords;
 }): Promise<RideCardData> {
+  const { start, destination, route } = await calculateRideMetrics(input.startLabel, input.destinationLabel, input.startCoords, input.destinationCoords);
   const { data, error } = await supabase.from("rides").insert({
     creator_id: input.creatorId,
     title: input.title,
@@ -195,15 +241,18 @@ export async function createRide(input: {
     start_label: input.startLabel,
     destination_label: input.destinationLabel,
     starts_at: input.startsAt,
+    distance_meters: Math.round(route.distanceKilometers * 1000),
+    estimated_duration_minutes: route.estimatedDurationMinutes,
+    route_data: { start, destination },
     capacity: input.capacity,
     status: "open",
   }).select(rideSelect).single();
   if (error) throw error;
   const ride = mapRide(data as unknown as RideRow);
   await Promise.all([
-    updateStored<RideCardData[]>(input.creatorId, "open-rides", (rides) => [...rides, ride].sort((a, b) => a.startsAt.localeCompare(b.startsAt))),
-    updateStored<RideCardData[]>(input.creatorId, "user-rides", (rides) => [...rides, ride].sort((a, b) => a.startsAt.localeCompare(b.startsAt))),
-    writeStored(input.creatorId, `ride-details:${ride.id}`, ride),
+    updateStored<RideCardData[]>(input.creatorId, openRidesKey, (rides) => [...rides, ride].sort((a, b) => a.startsAt.localeCompare(b.startsAt))),
+    updateStored<RideCardData[]>(input.creatorId, userRidesKey, (rides) => [...rides, ride].sort((a, b) => a.startsAt.localeCompare(b.startsAt))),
+    writeStored(input.creatorId, rideDetailsKey(ride.id), ride),
   ]);
   return ride;
 }
@@ -215,7 +264,10 @@ export async function updateRideDetails(rideId: string, userId: string, input: {
   destinationLabel: string;
   startsAt: string;
   capacity: number;
+  startCoords?: AppCoords;
+  destinationCoords?: AppCoords;
 }): Promise<RideCardData> {
+  const { start, destination, route } = await calculateRideMetrics(input.startLabel, input.destinationLabel, input.startCoords, input.destinationCoords);
   const { error } = await supabase.rpc("update_ride_details", {
     p_ride_id: rideId,
     p_title: input.title,
@@ -227,6 +279,13 @@ export async function updateRideDetails(rideId: string, userId: string, input: {
   });
   if (error) throw error;
 
+  const { error: metricsError } = await supabase.from("rides").update({
+    distance_meters: Math.round(route.distanceKilometers * 1000),
+    estimated_duration_minutes: route.estimatedDurationMinutes,
+    route_data: { start, destination },
+  }).eq("id", rideId).eq("creator_id", userId).select("id").single();
+  if (metricsError) throw metricsError;
+
   const ride = await loadRideDetails(rideId, userId, true);
   if (!ride) throw new Error("The ride was updated but could not be reloaded.");
   const replaceRide = (rides: RideCardData[]) => {
@@ -235,12 +294,46 @@ export async function updateRideDetails(rideId: string, userId: string, input: {
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   };
   await refreshStored(
-    updateStored<RideCardData[]>(userId, "open-rides", replaceRide),
-    updateStored<RideCardData[]>(userId, "user-rides", replaceRide),
+    updateStored<RideCardData[]>(userId, openRidesKey, replaceRide),
+    updateStored<RideCardData[]>(userId, userRidesKey, replaceRide),
     updateStored<ConversationData[]>(userId, conversationsKey, (rows) =>
       rows.map((row) => row.rideId === rideId ? { ...row, title: ride.title } : row)),
   );
   return ride;
+}
+
+export async function saveRideRouteMetrics(
+  rideId: string,
+  userId: string,
+  route: Pick<RouteResult, "distanceKilometers" | "estimatedDurationMinutes"> & {
+    start: AppCoords;
+    destination: AppCoords;
+  },
+): Promise<void> {
+  const distanceMeters = Math.round(route.distanceKilometers * 1000);
+  const estimatedDurationMinutes = route.estimatedDurationMinutes;
+  const { error } = await supabase.from("rides").update({
+    distance_meters: distanceMeters,
+    estimated_duration_minutes: estimatedDurationMinutes,
+    route_data: { start: route.start, destination: route.destination },
+  }).eq("id", rideId).eq("creator_id", userId).select("id").single();
+  if (error) throw error;
+  const updateMetrics = (ride: RideCardData | null) => ride
+    ? {
+      ...ride,
+      distanceMeters,
+      estimatedDurationMinutes,
+      startCoords: route.start,
+      destinationCoords: route.destination,
+      distance: formatRideDistance(distanceMeters / 1000),
+      duration: formatRideDuration(estimatedDurationMinutes),
+    }
+    : ride;
+  await Promise.all([
+    updateStored<RideCardData[]>(userId, openRidesKey, (rides) => rides.map((ride) => updateMetrics(ride) as RideCardData)),
+    updateStored<RideCardData[]>(userId, userRidesKey, (rides) => rides.map((ride) => updateMetrics(ride) as RideCardData)),
+    updateStored<RideCardData | null>(userId, rideDetailsKey(rideId), updateMetrics),
+  ]);
 }
 
 export async function loadUserRideRequests(userId: string, force = false): Promise<RideRequestData[]> {
@@ -321,7 +414,7 @@ export async function assignRideAdmin(rideId: string, userId: string, assignedBy
 }
 
 export async function loadUserRides(userId: string, force = false): Promise<RideCardData[]> {
-  return localFirst(userId, "user-rides", async () => {
+  return localFirst(userId, userRidesKey, async () => {
     const [owned, administered, approved] = await Promise.all([
       supabase.from("rides").select("id").eq("creator_id", userId),
       supabase.from("ride_admins").select("ride_id").eq("user_id", userId),
@@ -560,7 +653,7 @@ export async function loadConversations(userId: string, force = false): Promise<
 
  
 export async function loadRideDetails(rideId: string, userId: string, force = false): Promise<RideCardData | null> {
-  return localFirst(userId, `ride-details:${rideId}`, async () => {
+  return localFirst(userId, rideDetailsKey(rideId), async () => {
     const { data, error } = await supabase.from("rides").select(rideSelect).eq("id", rideId).maybeSingle();
     if (error) throw error;
     return data ? mapRide(data as unknown as RideRow) : null;
@@ -600,9 +693,9 @@ export async function cancelRide(rideId: string, userId: string): Promise<void> 
   if (error) throw error;
   const markCancelled = (rides: RideCardData[]) => rides.map((ride) => ride.id === rideId ? { ...ride, status: "cancelled" as const } : ride);
   await Promise.all([
-    updateStored<RideCardData[]>(userId, "open-rides", (rides) => rides.filter((ride) => ride.id !== rideId)),
-    updateStored<RideCardData[]>(userId, "user-rides", markCancelled),
-    updateStored<RideCardData | null>(userId, `ride-details:${rideId}`, (ride) => ride && { ...ride, status: "cancelled" }),
+    updateStored<RideCardData[]>(userId, openRidesKey, (rides) => rides.filter((ride) => ride.id !== rideId)),
+    updateStored<RideCardData[]>(userId, userRidesKey, markCancelled),
+    updateStored<RideCardData | null>(userId, rideDetailsKey(rideId), (ride) => ride && { ...ride, status: "cancelled" }),
     writeStored(userId, `ride-requests:${rideId}`, [] as AdminRequestData[]),
   ]);
   await updateStored<AdminRequestData[]>(userId, "pending-admin-requests", (requests) => requests.filter((request) => request.rideId !== rideId));
@@ -612,7 +705,7 @@ export async function leaveRide(rideId: string, userId: string): Promise<void> {
   const { error } = await supabase.rpc("leave_ride", { p_ride_id: rideId });
   if (error) throw error;
   await Promise.all([
-    updateStored<RideCardData[]>(userId, "user-rides", (rides) => rides.filter((ride) => ride.id !== rideId)),
+    updateStored<RideCardData[]>(userId, userRidesKey, (rides) => rides.filter((ride) => ride.id !== rideId)),
     updateStored<RideRequestData[]>(userId, "user-ride-requests", (requests) => requests.map((request) => request.rideId === rideId && request.status === "approved" ? { ...request, status: "cancelled" } : request)),
     updateStored<RideParticipantData[]>(userId, `ride-participants:${rideId}`, (people) => people.filter((person) => person.userId !== userId)),
     updateStored<ConversationData[]>(userId, conversationsKey, (rows) => rows.filter((row) => row.rideId !== rideId)),
@@ -629,11 +722,25 @@ export async function loadConversationParticipants(conversationId: string, userI
 }
 
 export async function loadSharedActiveRides(otherUserId: string, userId: string, force = false): Promise<SharedRideData[]> {
-  return localFirst(userId, `shared-rides:${otherUserId}`, async () => {
+  return localFirst(userId, `shared-rides-v2:${otherUserId}`, async () => {
     const { data, error } = await supabase.rpc("shared_active_rides", { p_other_user_id: otherUserId });
     if (error) throw error;
-    return ((data ?? []) as { id: string; title: string; start_label: string; destination_label: string; starts_at: string }[])
-      .map((ride) => ({ id: ride.id, title: ride.title, route: `${ride.start_label} → ${ride.destination_label}`, startsAt: ride.starts_at }));
+    return ((data ?? []) as {
+      id: string;
+      title: string;
+      start_label: string;
+      destination_label: string;
+      starts_at: string;
+      distance_meters?: number | null;
+      estimated_duration_minutes?: number | null;
+    }[]).map((ride) => ({
+      id: ride.id,
+      title: ride.title,
+      route: `${ride.start_label} → ${ride.destination_label}`,
+      startsAt: ride.starts_at,
+      distance: ride.distance_meters == null ? "Route distance not set" : formatRideDistance(ride.distance_meters / 1000),
+      duration: ride.estimated_duration_minutes == null ? "Time not set" : formatRideDuration(ride.estimated_duration_minutes),
+    }));
   }, { force });
 }
 
@@ -723,6 +830,25 @@ export async function updateProfile(input: Omit<ProfileData, "id"> & { id: strin
   if (error) throw error;
   const profile: ProfileData = { id: data.id, displayName: data.display_name, homeCity: data.home_city, bio: data.bio, ridingPace: data.riding_pace, discoverable: data.discoverable };
   await writeStored(input.id, "profile", profile);
+  return profile;
+}
+
+export async function updateProfileDiscoverable(userId: string, discoverable: boolean): Promise<ProfileData> {
+  const { data, error } = await supabase.from("profiles")
+    .update({ discoverable })
+    .eq("id", userId)
+    .select("id, display_name, home_city, bio, riding_pace, discoverable")
+    .single();
+  if (error) throw error;
+  const profile: ProfileData = {
+    id: data.id,
+    displayName: data.display_name,
+    homeCity: data.home_city,
+    bio: data.bio,
+    ridingPace: data.riding_pace,
+    discoverable: data.discoverable,
+  };
+  await writeStored(userId, "profile", profile);
   return profile;
 }
 

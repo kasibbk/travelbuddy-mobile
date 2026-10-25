@@ -71,6 +71,7 @@ function RouteGuard() {
       <Stack.Screen name="account/settings" options={{ presentation: "modal" }} />
       <Stack.Screen name="notifications" options={{ presentation: "modal" }} />
       <Stack.Screen name="notifications/[group]" />
+      <Stack.Screen name="location-picker" options={{ presentation: "card" }} />
     </Stack>
   );
 }
