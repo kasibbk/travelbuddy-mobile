@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, LogOut, ShieldCheck, UserRoundX, UserRoundMinus } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
+import { Avatar } from "../../components/avatar";
 import { colors } from "../../components/theme";
+import { BlockedUserData, getImagePublicUrl, loadBlockedUsers, unblockUser } from "../../lib/app-data";
 import { getAuthRedirectUrl } from "../../lib/auth-links";
 import { clearStore } from "../../lib/local-store";
 import { supabase } from "../../lib/supabase";
@@ -18,6 +20,26 @@ export default function AccountSettingsScreen() {
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [blocked, setBlocked] = useState<BlockedUserData[]>([]);
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadBlockedUsers().then((rows) => { if (active) setBlocked(rows); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  async function handleUnblock(userId: string) {
+    setUnblockingId(userId);
+    try {
+      await unblockUser(userId);
+      setBlocked((current) => current.filter((user) => user.id !== userId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not unblock this user.");
+    } finally {
+      setUnblockingId(null);
+    }
+  }
   const [resetBusy, setResetBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -124,6 +146,13 @@ export default function AccountSettingsScreen() {
         <View style={styles.settingRow}><View style={styles.settingCopy}><Text style={styles.settingTitle}>Password</Text><Text style={styles.settingDetail}>Send a secure password-reset link to your email.</Text></View><Pressable accessibilityRole="button" disabled={resetBusy || !userEmail} onPress={() => void sendPasswordReset()} style={styles.smallButton}>{resetBusy ? <ActivityIndicator size="small" color={colors.forest} /> : <Text style={styles.smallButtonText}>Reset</Text>}</Pressable></View>
         {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
         {!!error && !action && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+      </View>
+
+      <Text style={styles.sectionTitle}>Blocked users</Text>
+      <View style={styles.actionCard}>
+        {blocked.length === 0 ? <Text style={styles.settingDetail}>You haven’t blocked anyone. Blocked users can still see you and your rides, but their direct messages, friend requests and join requests aren’t delivered to you.</Text> : blocked.map((user) => (
+          <View key={user.id} style={styles.settingRow}><Avatar initials={user.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", user.avatarPath)} size={36} /><View style={styles.settingCopy}><Text style={styles.settingTitle}>{user.name}</Text></View><Pressable accessibilityRole="button" disabled={unblockingId === user.id} onPress={() => void handleUnblock(user.id)} style={styles.smallButton}>{unblockingId === user.id ? <ActivityIndicator size="small" color={colors.forest} /> : <Text style={styles.smallButtonText}>Unblock</Text>}</Pressable></View>
+        ))}
       </View>
 
       <Text style={styles.sectionTitle}>Account lifecycle</Text>

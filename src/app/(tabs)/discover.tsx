@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { MapPin, Navigation, Search, Users } from "lucide-react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppHeader } from "../../components/app-header";
+import { Avatar } from "../../components/avatar";
 import { CreateRideModal } from "../../components/create-ride-modal";
 import { EmptyState } from "../../components/empty-state";
 import { PageShell } from "../../components/page-shell";
@@ -10,7 +11,7 @@ import { RideCard } from "../../components/ride-card";
 import { colors } from "../../components/theme";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
-import { cancelRideRequest, loadNearbyRiders, loadOpenRides, loadUserRideRequests, NearbyRiderData, requestRide, RideCardData, RideRequestData } from "../../lib/app-data";
+import { cancelRideRequest, getImagePublicUrl, loadNearbyRiders, loadOpenRides, loadUserRideRequests, NearbyRiderData, requestRide, RideCardData, RideRequestData } from "../../lib/app-data";
 
 export default function DiscoverScreen() {
   const router = useRouter();
@@ -127,7 +128,7 @@ export default function DiscoverScreen() {
     <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={search} onChangeText={setSearch} placeholder="Search rides or routes" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>
     {ridesLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : ridesError ? <EmptyState icon={MapPin} title="Rides couldn’t load" description={ridesError} /> : visibleRides.length ? <View style={styles.rideList}>{visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} viewerIsOwner={ride.creatorId === userId} requestState={requestsByRide[ride.id]} actionPending={Boolean(busyRideIds[ride.id])} actionDisabled={requestsLoading || !!requestLoadError} actionError={requestErrors[ride.id] || requestLoadError} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} onRequestSpot={() => handleRideRequest(ride)} onCancelRequest={() => handleRideRequest(ride)} />)}</View> : <EmptyState icon={MapPin} title={search ? "No matching rides" : "No open rides yet"} description={search ? "Try another route or clear your search." : "When riders publish open trips, they’ll appear here."} />}
     <View style={styles.nearbySection}><View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>LOCATION-BASED SUGGESTIONS</Text><Text style={styles.sectionTitle}>Riders nearby</Text></View><Navigation color={colors.leaf} size={18} /></View>
-      {nearbyLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : nearbyError ? <EmptyState icon={Users} title="Nearby riders couldn’t load" description={nearbyError} /> : nearbyRiders.length ? <View style={styles.peopleList}>{nearbyRiders.map((person) => <Pressable accessibilityRole="button" accessibilityLabel={`View ${person.name}'s public profile`} onPress={() => router.push({ pathname: "/users/[id]", params: { id: person.id } })} style={styles.personRow} key={person.id}><View style={styles.personAvatar}><Text style={styles.personInitials}>{person.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</Text></View><View style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{person.city ?? "Nearby rider"} · {person.distanceKm.toFixed(1)} km</Text></View></Pressable>)}</View> : <EmptyState icon={Users} title="No nearby riders to show" description="Suggestions appear when you share an approximate location and opted-in riders are in range." />}
+      {nearbyLoading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : nearbyError ? <EmptyState icon={Users} title="Nearby riders couldn’t load" description={nearbyError} /> : nearbyRiders.length ? <View style={styles.peopleList}>{nearbyRiders.map((person) => <Pressable accessibilityRole="button" accessibilityLabel={`View ${person.name}'s public profile`} onPress={() => router.push({ pathname: "/users/[id]", params: { id: person.id } })} style={styles.personRow} key={person.id}><Avatar initials={person.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", person.avatarPath)} size={37} /><View style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{person.city ?? "Nearby rider"} · {person.distanceKm.toFixed(1)} km</Text></View></Pressable>)}</View> : <EmptyState icon={Users} title="No nearby riders to show" description="Suggestions appear when you share an approximate location and opted-in riders are in range." />}
     </View>
     <CreateRideModal visible={createRideVisible} onClose={() => setCreateRideVisible(false)} onOpen={() => setCreateRideVisible(true)} onCreated={(ride) => setRides((current) => [ride, ...current.filter((item) => item.id !== ride.id)].sort((left, right) => left.startsAt.localeCompare(right.startsAt)))} />
   </PageShell>;
@@ -166,8 +167,6 @@ const styles = StyleSheet.create({
   nearbySection: { marginTop: 26, paddingTop: 2, paddingBottom: 10 },
   nearbyDescription: { marginHorizontal: 20, marginBottom: 5, color: colors.muted, fontSize: 9 },
   personRow: { minHeight: 61, marginHorizontal: 20, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 10 },
-  personAvatar: { width: 37, height: 37, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  personInitials: { color: colors.surface, fontSize: 10, fontWeight: "800" },
   personInfo: { flex: 1, gap: 3 },
   personName: { color: colors.ink, fontSize: 10, fontWeight: "700" },
   personNote: { color: colors.muted, fontSize: 8 },

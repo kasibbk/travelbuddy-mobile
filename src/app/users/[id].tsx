@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Bike, MapPin, MessageCircle, UserPlus, Users } from "lucide-react-native";
+import { ArrowLeft, Ban, Bike, MapPin, MessageCircle, UserPlus, Users } from "lucide-react-native";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
+import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { colors } from "../../components/theme";
-import { createDirectConversation, createFriendRequest, FriendData, loadFriendRequests, loadPublicProfile, PublicProfileData } from "../../lib/app-data";
+import { blockUser, createDirectConversation, createFriendRequest, FriendData, getImagePublicUrl, loadBlockedUsers, loadFriendRequests, loadPublicProfile, PublicProfileData, unblockUser } from "../../lib/app-data";
 
 export default function PublicUserProfileScreen() {
   const router = useRouter();
@@ -18,6 +19,9 @@ export default function PublicUserProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [confirmingBlock, setConfirmingBlock] = useState(false);
+  const [picturePreviewOpen, setPicturePreviewOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const storeVersion = useStoreVersion();
@@ -27,11 +31,12 @@ export default function PublicUserProfileScreen() {
     if (id === userId) { router.replace("/profile"); return; }
     let active = true;
     setError("");
-    Promise.all([loadPublicProfile(id, userId), loadFriendRequests(userId)])
-      .then(([row, friendships]) => {
+    Promise.all([loadPublicProfile(id, userId), loadFriendRequests(userId), loadBlockedUsers()])
+      .then(([row, friendships, blockedUsers]) => {
         if (!active) return;
         setProfile(row);
         setFriendship(friendships.find((item) => item.otherUserId === id) ?? null);
+        setIsBlocked(blockedUsers.some((blocked) => blocked.id === id));
       })
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load this profile."); })
       .finally(() => { if (active) setLoading(false); });
@@ -43,9 +48,10 @@ export default function PublicUserProfileScreen() {
     setRefreshing(true);
     setError("");
     try {
-      const [row, friendships] = await Promise.all([loadPublicProfile(id, userId, true), loadFriendRequests(userId, true)]);
+      const [row, friendships, blockedUsers] = await Promise.all([loadPublicProfile(id, userId, true), loadFriendRequests(userId, true), loadBlockedUsers()]);
       setProfile(row);
       setFriendship(friendships.find((item) => item.otherUserId === id) ?? null);
+      setIsBlocked(blockedUsers.some((blocked) => blocked.id === id));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not refresh this profile.");
     } finally {
@@ -83,13 +89,36 @@ export default function PublicUserProfileScreen() {
     }
   }
 
+  async function toggleBlock() {
+    if (!id || Array.isArray(id) || busy) return;
+    if (!isBlocked && !confirmingBlock) {
+      setConfirmingBlock(true);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      if (isBlocked) await unblockUser(id);
+      else await blockUser(id);
+      setIsBlocked(!isBlocked);
+      setNotice(isBlocked ? "User unblocked." : "User blocked. You won’t receive their direct messages, friend requests, or join requests. They can still see you and your rides.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update the block.");
+    } finally {
+      setConfirmingBlock(false);
+      setBusy(false);
+    }
+  }
+
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() ?? "";
+  const profilePictureUrl = getImagePublicUrl("profile-images", profile?.avatarPath ?? null);
   const pace = profile?.ridingPace ? profile.ridingPace[0].toUpperCase() + profile.ridingPace.slice(1) : "Not shared";
 
   return <View style={styles.screen}>
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Rider profile</Text></View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !profile ? <EmptyState icon={Users} title="Profile unavailable" description={error} /> : profile ? <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshProfile} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
-      <View style={styles.profileCard}><Avatar initials={initials || "R"} size={62} /><Text style={styles.name}>{profile.displayName}</Text>
+      <View style={styles.profileCard}>{profilePictureUrl ? <Pressable accessibilityRole="button" accessibilityLabel="View profile picture" onPress={() => setPicturePreviewOpen(true)}><Avatar initials={initials || "R"} imageUrl={profilePictureUrl} size={62} /></Pressable> : <Avatar initials={initials || "R"} size={62} />}<Text style={styles.name}>{profile.displayName}</Text>
         {!!profile.homeCity && <View style={styles.city}><MapPin color={colors.leaf} size={13} /><Text style={styles.cityText}>{profile.homeCity}</Text></View>}
         <Text style={styles.bio}>{profile.bio || "No bio shared."}</Text>
         <View style={styles.pace}><Bike color={colors.leaf} size={14} /><Text style={styles.paceText}>{pace} pace</Text></View>
@@ -97,7 +126,9 @@ export default function PublicUserProfileScreen() {
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
       {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       {friendship?.status === "accepted" ? <Pressable accessibilityRole="button" disabled={busy} onPress={openChat} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <><MessageCircle color={colors.surface} size={15} /><Text style={styles.buttonText}>Message</Text></>}</Pressable> : friendship?.status === "pending" ? <View style={styles.state}><Text style={styles.stateText}>{friendship.direction === "outgoing" ? "Friend request sent" : "Respond to this request in Friends"}</Text></View> : <Pressable accessibilityRole="button" disabled={busy} onPress={sendFriendRequest} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <><UserPlus color={colors.surface} size={15} /><Text style={styles.buttonText}>Add friend</Text></>}</Pressable>}
+      <Pressable accessibilityRole="button" disabled={busy} onPress={() => void toggleBlock()} style={styles.blockButton}><Ban color="#A25743" size={14} /><Text style={styles.blockText}>{isBlocked ? "Unblock user" : confirmingBlock ? "Tap again to confirm block" : "Block user"}</Text></Pressable>
     </ScrollView> : <EmptyState icon={Users} title="Profile unavailable" description="This rider hasn’t shared a public profile, or the account no longer exists." />}
+    <ImagePreviewModal imageUrl={profilePictureUrl} visible={picturePreviewOpen} label={profile?.displayName ?? "Profile"} onClose={() => setPicturePreviewOpen(false)} />
   </View>;
 }
 
@@ -116,6 +147,8 @@ const styles = StyleSheet.create({
   paceText: { color: colors.forest, fontSize: 8, fontWeight: "700" },
   primaryButton: { minHeight: 42, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7, backgroundColor: colors.forest },
   buttonText: { color: colors.surface, fontSize: 10, fontWeight: "700" },
+  blockButton: { minHeight: 40, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  blockText: { color: "#A25743", fontSize: 9, fontWeight: "700" },
   state: { minHeight: 42, marginTop: 12, alignItems: "center", justifyContent: "center" },
   stateText: { color: colors.muted, fontSize: 9, fontWeight: "700" },
   error: { marginTop: 9, color: "#9B493C", fontSize: 8, lineHeight: 12 },

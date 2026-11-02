@@ -9,8 +9,9 @@ import { setForegroundConversation } from "../../lib/notifications";
 import { supabase } from "../../lib/supabase";
 import { EmptyState } from "../../components/empty-state";
 import { Avatar } from "../../components/avatar";
+import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { colors } from "../../components/theme";
-import { ConversationData, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MessageData, sendMessage, setConversationActive, syncMessages } from "../../lib/app-data";
+import { ConversationData, getImagePublicUrl, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MessageData, sendMessage, setConversationActive, syncMessages } from "../../lib/app-data";
 
 const COMPOSER_FIELD_MIN_HEIGHT = 42;
 
@@ -21,6 +22,7 @@ export default function ChatScreen() {
   const [conversation, setConversation] = useState<ConversationData | null>(null);
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [senderNames, setSenderNames] = useState<Record<string, string>>({});
+  const [senderAvatarPaths, setSenderAvatarPaths] = useState<Record<string, string | null>>({});
   const [typingUsers, setTypingUsers] = useState<{ userId: string; displayName: string }[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -28,6 +30,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
   const storeVersion = useStoreVersion();
   const messagesRef = useRef<ScrollView>(null);
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -41,18 +44,24 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!ready) return;
+    let active = true;
     if (!userId || !id || Array.isArray(id)) {
-      setConversation(null);
-      setMessages([]);
-      setSenderNames({});
-      setError("");
-      setLoading(false);
-      return;
+      async function clearUnavailableConversation() {
+        await Promise.resolve();
+        if (!active) return;
+        setConversation(null);
+        setMessages([]);
+        setSenderNames({});
+        setSenderAvatarPaths({});
+        setError("");
+        setLoading(false);
+      }
+      void clearUnavailableConversation();
+      return () => { active = false; };
     }
 
-    let active = true;
-    setError("");
     loadConversations(userId).then(async (rows) => {
+      if (active) setError("");
       const selected = rows.find((row) => row.id === id);
       if (!selected) {
         if (active) setError("This conversation isn’t available to your account.");
@@ -66,6 +75,7 @@ export default function ChatScreen() {
         setConversation(selected);
         setMessages(thread);
         setSenderNames(Object.fromEntries(participants.map((participant) => [participant.userId, participant.displayName])));
+        setSenderAvatarPaths(Object.fromEntries(participants.map((participant) => [participant.userId, participant.avatarPath])));
       }
     }).catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load this conversation.");
@@ -176,6 +186,9 @@ export default function ChatScreen() {
 
   const title = routeTitle || conversation?.title || "Conversation";
   const initials = title.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const directAvatarUrl = conversation?.kind === "direct"
+    ? getImagePublicUrl("profile-images", conversation.avatarPath)
+    : null;
 
   function publishTypingPresence(typing: boolean) {
     typingActiveRef.current = typing;
@@ -225,15 +238,19 @@ export default function ChatScreen() {
   }
 
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
-    <View style={styles.header}><Pressable accessibilityLabel="Back to messages" style={styles.back} onPress={() => router.back()}><ArrowLeft color={colors.ink} size={19} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Open details for ${title}`} disabled={!conversation} onPress={() => conversation && router.push({ pathname: "/chat-details/[id]", params: { id: conversation.id } })} style={styles.headerDetails}><Avatar initials={initials || "?"} color={colors.leaf} size={38} /><View style={styles.headerText}><Text numberOfLines={1} style={styles.name}>{title}</Text></View></Pressable><Pressable accessibilityLabel="More options" disabled style={[styles.more, styles.moreDisabled]}><MoreHorizontal color={colors.muted} size={20} /></Pressable></View>
+    <View style={styles.header}><Pressable accessibilityLabel="Back to messages" style={styles.back} onPress={() => router.back()}><ArrowLeft color={colors.ink} size={19} /></Pressable><View style={styles.headerDetails}><Pressable accessibilityRole="button" accessibilityLabel={`View ${title}'s profile picture`} disabled={!directAvatarUrl} onPress={() => setAvatarPreviewOpen(true)}><Avatar initials={initials || "?"} imageUrl={directAvatarUrl} color={colors.leaf} size={38} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Open details for ${title}`} disabled={!conversation} onPress={() => conversation && router.push({ pathname: "/chat-details/[id]", params: { id: conversation.id } })} style={styles.headerText}><Text numberOfLines={1} style={styles.name}>{title}</Text></Pressable></View><Pressable accessibilityLabel="More options" disabled style={[styles.more, styles.moreDisabled]}><MoreHorizontal color={colors.muted} size={20} /></Pressable></View>
+    <ImagePreviewModal imageUrl={directAvatarUrl} visible={avatarPreviewOpen} label={title} onClose={() => setAvatarPreviewOpen(false)} />
     <ScrollView ref={messagesRef} style={styles.messages} contentContainerStyle={styles.messageContent} onLayout={() => messagesRef.current?.scrollToEnd({ animated: false })} onContentSizeChange={() => messagesRef.current?.scrollToEnd({ animated: false })} keyboardShouldPersistTaps="handled">
       {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error ? <EmptyState icon={MessageCircle} title="Conversation unavailable" description={error} /> : messages.length ? messages.map((message) => {
         const mine = message.senderId === userId;
+        const senderDisplayName = senderNames[message.senderId] ?? (conversation?.kind === "direct" ? conversation.title : "Rider");
+        const senderInitials = senderDisplayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+        const senderAvatarPath = senderAvatarPaths[message.senderId];
         const senderName = conversation?.kind === "ride"
           ? mine ? null : senderNames[message.senderId] ?? "Rider"
           : null;
         const deliveryStatus = mine ? message.deliveryStatus ?? "sent" : null;
-        return <View key={message.id} style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}>{senderName && <Text style={styles.senderName}>{senderName}</Text>}<Text style={styles.message}>{message.body}</Text><Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text>{deliveryStatus && <Text style={styles.deliveryStatus}>{deliveryStatus[0].toUpperCase() + deliveryStatus.slice(1)}</Text>}</View>;
+        return <View key={message.id} style={[styles.messageRow, mine && styles.myMessageRow]}>{conversation?.kind === "ride" && !mine && <Avatar initials={senderInitials || "R"} imageUrl={getImagePublicUrl("profile-images", senderAvatarPath)} size={30} />}<View style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}>{senderName && <Text style={styles.senderName}>{senderName}</Text>}<Text style={styles.message}>{message.body}</Text><Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text>{deliveryStatus && <Text style={styles.deliveryStatus}>{deliveryStatus[0].toUpperCase() + deliveryStatus.slice(1)}</Text>}</View></View>;
       }) : <EmptyState icon={MessageCircle} title="No messages yet" description="Messages for this conversation will appear here." />}
     </ScrollView>
     {typingUsers.length > 0 && <Text accessibilityLiveRegion="polite" style={styles.typingIndicator}>{conversation?.kind === "direct"
@@ -261,7 +278,9 @@ const styles = StyleSheet.create({
   sendButtonDisabled: { opacity: 0.5 },
   sendError: { width: "100%", color: "#9B493C", fontSize: 8, lineHeight: 12 },
   loader: { marginVertical: 28 },
-  bubble: { maxWidth: "84%", padding: 11, borderWidth: 1, borderColor: colors.line, borderTopLeftRadius: 4, borderTopRightRadius: 13, borderBottomRightRadius: 13, borderBottomLeftRadius: 13 },
+  messageRow: { width: "100%", flexDirection: "row", alignItems: "flex-end", gap: 7 },
+  myMessageRow: { justifyContent: "flex-end" },
+  bubble: { maxWidth: "82%", padding: 11, borderWidth: 1, borderColor: colors.line, borderTopLeftRadius: 4, borderTopRightRadius: 13, borderBottomRightRadius: 13, borderBottomLeftRadius: 13 },
   otherBubble: { alignSelf: "flex-start", backgroundColor: colors.surface },
   myBubble: { alignSelf: "flex-end", borderColor: "#DFE8D6", borderTopLeftRadius: 13, borderTopRightRadius: 4, backgroundColor: "#EAF0DF" },
   message: { color: "#40554A", fontSize: 10, lineHeight: 15 },

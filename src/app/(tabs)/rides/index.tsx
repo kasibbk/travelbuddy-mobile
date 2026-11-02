@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { CalendarDays, Check, ShieldCheck, UserPlus, X } from "lucide-react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppHeader } from "../../../components/app-header";
+import { Avatar } from "../../../components/avatar";
 import { AssignRideAdminModal } from "../../../components/assign-ride-admin-modal";
 import { EmptyState } from "../../../components/empty-state";
 import { PageShell } from "../../../components/page-shell";
@@ -13,6 +14,7 @@ import { useStoreVersion } from "../../../lib/store-events";
 import {
   AdminRequestData,
   FriendData,
+  getImagePublicUrl,
   loadFriendRequests,
   loadPendingAdminRequests,
   loadRideAdmins,
@@ -134,7 +136,7 @@ export default function MyRidesScreen() {
       {requests.map((request) => {
         const isReviewing = reviewing?.requestId === request.id;
         return <View style={styles.requestRow} key={request.id}>
-          <View style={styles.requestAvatar}><Text style={styles.requestInitials}>{request.riderName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</Text></View>
+          <Avatar initials={request.riderName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", request.avatarPath)} size={36} />
           <View style={styles.requestInfo}>
             <Text style={styles.requestName}>{request.riderName}</Text>
             <Text style={styles.requestMessage}>{request.message || "Requested to join"} · {request.rideTitle}</Text>
@@ -179,7 +181,7 @@ const styles = StyleSheet.create({
   rideList: { gap: 12, paddingHorizontal: 16 },
   requestPanel: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface },
   requestHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, eyebrow: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 0.8 }, panelTitle: { marginTop: 4, color: colors.ink, fontFamily: "Georgia", fontSize: 21 }, helper: { marginTop: 8, marginBottom: 11, color: colors.muted, fontSize: 9, lineHeight: 14 },
-  requestRow: { minHeight: 57, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8 }, requestInfo: { flex: 1, gap: 3 }, requestName: { color: colors.ink, fontSize: 10, fontWeight: "700" }, requestMessage: { color: colors.muted, fontSize: 7 }, requestError: { color: "#9B493C", fontSize: 7 }, requestAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.leaf }, requestInitials: { color: colors.surface, fontSize: 9, fontWeight: "800" },
+  requestRow: { minHeight: 57, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8 }, requestInfo: { flex: 1, gap: 3 }, requestName: { color: colors.ink, fontSize: 10, fontWeight: "700" }, requestMessage: { color: colors.muted, fontSize: 7 }, requestError: { color: "#9B493C", fontSize: 7 },
   decisionButton: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" }, approveButton: { backgroundColor: "#EAF0DF" }, declineButton: { backgroundColor: "#FBF1EB" }, decisionDisabled: { opacity: 0.55 },
   adminList: { gap: 10, paddingHorizontal: 16 }, adminRide: { padding: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface }, adminRideHeader: { flexDirection: "row", alignItems: "center", gap: 8 }, adminRideCopy: { flex: 1, gap: 4 }, adminRideTitle: { color: colors.ink, fontSize: 11, fontWeight: "700" }, adminRideRoute: { color: colors.muted, fontSize: 8 }, adminRideMetrics: { marginTop: 8, color: colors.forest, fontSize: 8, fontWeight: "700" }, adminNames: { marginTop: 10, color: colors.muted, fontSize: 8, lineHeight: 13 }, assignButton: { minHeight: 35, marginTop: 10, borderRadius: 8, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, backgroundColor: colors.forest }, assignButtonText: { color: colors.surface, fontSize: 9, fontWeight: "700" },
   loader: { marginVertical: 26 },

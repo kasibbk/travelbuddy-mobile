@@ -2,8 +2,9 @@ import { useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ShieldCheck, UserPlus, Users, X } from "lucide-react-native";
 import { EmptyState } from "./empty-state";
+import { Avatar } from "./avatar";
 import { colors } from "./theme";
-import { assignRideAdmin, FriendData, RideAdminData, RideCardData } from "../lib/app-data";
+import { assignRideAdmin, FriendData, getImagePublicUrl, RideAdminData, RideCardData } from "../lib/app-data";
 
 type AssignRideAdminModalProps = {
   visible: boolean;
@@ -46,7 +47,7 @@ export function AssignRideAdminModal({ visible, ride, friends, admins, assignedB
         {candidates.length ? candidates.map((friend) => {
           const initials = friend.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
           const isAssigning = assigningUserId === friend.otherUserId;
-          return <View key={friend.otherUserId} style={styles.friendRow}><View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View><View style={styles.friendCopy}><Text numberOfLines={1} style={styles.friendName}>{friend.name}</Text><Text style={styles.friendDetail}>Accepted friend</Text></View><Pressable accessibilityLabel={`Assign ${friend.name} as co-admin`} accessibilityState={{ disabled: !!assigningUserId }} disabled={!!assigningUserId} onPress={() => assign(friend)} style={[styles.assignButton, !!assigningUserId && styles.disabledButton]}>{isAssigning ? <ActivityIndicator size="small" color={colors.surface} /> : <><UserPlus color={colors.surface} size={13} /><Text style={styles.assignText}>Assign</Text></>}</Pressable></View>;
+          return <View key={friend.otherUserId} style={styles.friendRow}><Avatar initials={initials} imageUrl={getImagePublicUrl("profile-images", friend.avatarPath)} size={34} /><View style={styles.friendCopy}><Text numberOfLines={1} style={styles.friendName}>{friend.name}</Text><Text style={styles.friendDetail}>Accepted friend</Text></View><Pressable accessibilityLabel={`Assign ${friend.name} as co-admin`} accessibilityState={{ disabled: !!assigningUserId }} disabled={!!assigningUserId} onPress={() => assign(friend)} style={[styles.assignButton, !!assigningUserId && styles.disabledButton]}>{isAssigning ? <ActivityIndicator size="small" color={colors.surface} /> : <><UserPlus color={colors.surface} size={13} /><Text style={styles.assignText}>Assign</Text></>}</Pressable></View>;
         }) : <EmptyState icon={Users} title="No friends available" description="Accept a friend request first, or choose someone who isn’t already an admin." />}
       </ScrollView>
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
@@ -67,8 +68,6 @@ const styles = StyleSheet.create({
   list: { flexGrow: 0 },
   listContent: { paddingBottom: 6 },
   friendRow: { minHeight: 58, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", gap: 9 },
-  avatar: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: colors.leaf },
-  avatarText: { color: colors.surface, fontSize: 9, fontWeight: "800" },
   friendCopy: { flex: 1, gap: 3 },
   friendName: { color: colors.ink, fontSize: 10, fontWeight: "700" },
   friendDetail: { color: colors.muted, fontSize: 8 },

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { CalendarDays, MapPin, ShieldCheck, X } from "lucide-react-native";
+import { CalendarDays, ImagePlus, MapPin, ShieldCheck, X } from "lucide-react-native";
 import { DateTimeField } from "./date-time-field";
 import { useAuth } from "./auth-provider";
-import { createRide, RideCardData, updateRideDetails } from "../lib/app-data";
+import { createRide, getImagePublicUrl, ImageUploadAsset, RideCardData, updateRideDetails, uploadRideBannerImage } from "../lib/app-data";
 import { beginRideLocationSelection } from "../services/location/picker";
 import type { AppCoords } from "../services/location/types";
 import { colors } from "./theme";
@@ -35,6 +36,7 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
   const [destinationCoords, setDestinationCoords] = useState<AppCoords | undefined>();
   const [startsAt, setStartsAt] = useState<Date | null>(null);
   const [capacity, setCapacity] = useState("6");
+  const [bannerAsset, setBannerAsset] = useState<ImageUploadAsset | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const formRef = useRef<ScrollView>(null);
@@ -112,8 +114,29 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
       setStartsAt(null);
       setCapacity("6");
     }
+    setBannerAsset(null);
     setError("");
   }, [visible]);
+
+  async function chooseBannerImage() {
+    if (submitting) return;
+    setError("");
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.8,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset) throw new Error("No image was selected.");
+      setBannerAsset({ uri: asset.uri, mimeType: asset.mimeType });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not select the ride banner.");
+    }
+  }
 
   async function submitRide() {
     setError("");
@@ -132,6 +155,9 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
 
     setSubmitting(true);
     try {
+      const bannerImagePath = bannerAsset
+        ? await uploadRideBannerImage(userId, rideToEdit?.id ?? "new", bannerAsset)
+        : rideToEdit?.bannerImagePath ?? null;
       const ride = rideToEdit
         ? await updateRideDetails(rideToEdit.id, userId, {
           title: title.trim(),
@@ -140,6 +166,7 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
           destinationLabel: destination.trim(),
           startsAt: startsAt.toISOString(),
           capacity: capacityNumber,
+          bannerImagePath,
           startCoords,
           destinationCoords,
         })
@@ -151,6 +178,7 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
           destinationLabel: destination.trim(),
           startsAt: startsAt.toISOString(),
           capacity: capacityNumber,
+          bannerImagePath,
           startCoords,
           destinationCoords,
         });
@@ -175,6 +203,15 @@ export function CreateRideModal({ visible, onClose, onOpen, onCreated, ride: rid
             <View style={styles.sectionLabel}><MapPin color={colors.leaf} size={14} /><Text style={styles.sectionText}>YOUR ROUTE</Text></View>
             <LocationField label="Starting point" value={start} placeholder="Choose a meeting point on the map" disabled={submitting} onPress={() => chooseLocation("start")} />
             <LocationField label="Destination" value={destination} placeholder="Choose a destination on the map" disabled={submitting} onPress={() => chooseLocation("destination")} />
+            <View style={styles.field}>
+              <Text style={styles.label}>RIDE BANNER · OPTIONAL</Text>
+              <Pressable accessibilityRole="button" disabled={submitting} onPress={() => void chooseBannerImage()} style={styles.bannerPicker}>
+                {(bannerAsset?.uri ?? getImagePublicUrl("ride-banners", rideToEdit?.bannerImagePath ?? null))
+                  ? <Image source={{ uri: bannerAsset?.uri ?? getImagePublicUrl("ride-banners", rideToEdit?.bannerImagePath ?? null) ?? undefined }} style={styles.bannerPreview} />
+                  : <View style={styles.bannerPlaceholder}><ImagePlus color={colors.leaf} size={19} /><Text style={styles.bannerPlaceholderText}>Add a banner photo</Text></View>}
+                <View style={styles.bannerLabel}><ImagePlus color={colors.surface} size={13} /><Text style={styles.bannerLabelText}>{bannerAsset || rideToEdit?.bannerImagePath ? "Change banner" : "Choose image"}</Text></View>
+              </Pressable>
+            </View>
             <Field label="Description · optional" value={description} onChangeText={setDescription} onFocus={focusField} placeholder="A few details for riders" multiline maxLength={2000} />
             <View style={styles.sectionLabel}><CalendarDays color={colors.leaf} size={14} /><Text style={styles.sectionText}>WHEN & WHO</Text></View>
             <View style={styles.split}><DateTimeField label="Date" mode="date" value={startsAt} onChange={setStartsAt} /><DateTimeField label="Meet-up time" mode="time" value={startsAt} onChange={setStartsAt} /></View>
@@ -221,6 +258,12 @@ const styles = StyleSheet.create({
   locationButton: { minHeight: 43, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 12, paddingVertical: 9, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface },
   locationText: { flex: 1, color: colors.ink, fontSize: 11, lineHeight: 15 },
   locationPlaceholder: { color: colors.subtle },
+  bannerPicker: { minHeight: 125, overflow: "hidden", borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: "#E6ECDF" },
+  bannerPreview: { width: "100%", height: 145, resizeMode: "cover" },
+  bannerPlaceholder: { minHeight: 125, alignItems: "center", justifyContent: "center", gap: 7 },
+  bannerPlaceholderText: { color: colors.muted, fontSize: 9, fontWeight: "700" },
+  bannerLabel: { position: "absolute", right: 8, bottom: 8, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 7, backgroundColor: "#13251FD9" },
+  bannerLabelText: { color: colors.surface, fontSize: 8, fontWeight: "700" },
   split: { flexDirection: "row", gap: 10 },
   half: { flex: 1 },
   adminBox: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 9, backgroundColor: colors.paleGreen },

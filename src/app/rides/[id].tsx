@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, CalendarDays, Check, MessageCircle, Pencil, ShieldCheck, Users, X } from "lucide-react-native";
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { formatRideDistance, formatRideDuration } from "../../lib/ride-format";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
+import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { CreateRideModal } from "../../components/create-ride-modal";
 import { UnifiedMapView } from "../../components/UnifiedMapView";
 import { colors } from "../../components/theme";
@@ -20,6 +21,7 @@ import {
   createDirectConversation,
   createFriendRequest,
   FriendData,
+  getImagePublicUrl,
   leaveRide,
   loadConversations,
   loadFriendRequests,
@@ -64,6 +66,7 @@ export default function RideDetailsScreen() {
   const [leaveDialog, setLeaveDialog] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
   const [routePreview, setRoutePreview] = useState<RideRoutePreview | null>(null);
+  const [bannerPreviewOpen, setBannerPreviewOpen] = useState(false);
   const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
@@ -300,12 +303,14 @@ export default function RideDetailsScreen() {
   const calculatedDuration = currentRoutePreview?.status === "ready"
     ? formatRideDuration(currentRoutePreview.estimatedDurationMinutes)
     : null;
+  const bannerUrl = getImagePublicUrl("ride-banners", ride?.bannerImagePath ?? null);
 
   return <View style={styles.screen}>
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Ride details</Text><View style={{ flex: 1 }} />{conversation && <Pressable accessibilityLabel="Open ride chat" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: conversation.id } })} style={styles.headerAction}><MessageCircle color={colors.forest} size={18} /></Pressable>}</View>
+    <ImagePreviewModal imageUrl={bannerUrl} visible={bannerPreviewOpen} label={ride?.title ?? "Ride"} onClose={() => setBannerPreviewOpen(false)} />
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !ride ? <EmptyState icon={CalendarDays} title="Ride unavailable" description={error} /> : ride ? <>
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
-        <View style={styles.hero}><Text style={styles.status}>{ride.status === "cancelled" ? "CANCELLED" : ride.status === "completed" ? "COMPLETED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
+        <View style={styles.hero}>{bannerUrl && <Pressable accessibilityRole="button" accessibilityLabel={`View ${ride.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={styles.bannerPressable}><Image source={{ uri: bannerUrl }} style={styles.banner} /></Pressable>}<Text style={styles.status}>{ride.status === "cancelled" ? "CANCELLED" : ride.status === "completed" ? "COMPLETED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
         <View style={styles.tabs}>{tabs.map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, item === tab && styles.activeTab]}><Text style={[styles.tabText, item === tab && styles.activeTabText]}>{item}{item === "Requests" && requests.length ? ` · ${requests.length}` : ""}</Text></Pressable>)}</View>
 
         {tab === "Overview" ? <View style={styles.panel}>
@@ -338,10 +343,10 @@ export default function RideDetailsScreen() {
           const relationship = friendships.find((friend) => friend.otherUserId === person.userId);
           const isSelf = person.userId === userId;
           return <View key={person.userId} style={styles.personRow}>
-            <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSelf }} disabled={isSelf} onPress={() => router.push({ pathname: "/users/[id]", params: { id: person.userId } })} style={styles.personLink}><Avatar initials={person.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} size={38} /><View style={styles.personCopy}><Text style={styles.personName}>{person.displayName}{isSelf ? " · You" : ""}</Text><Text style={styles.personRole}>{person.role}</Text></View></Pressable>
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSelf }} disabled={isSelf} onPress={() => router.push({ pathname: "/users/[id]", params: { id: person.userId } })} style={styles.personLink}><Avatar initials={person.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", person.avatarPath)} size={38} /><View style={styles.personCopy}><Text style={styles.personName}>{person.displayName}{isSelf ? " · You" : ""}</Text><Text style={styles.personRole}>{person.role}</Text></View></Pressable>
             {!isSelf && relationship?.status === "accepted" ? <Pressable accessibilityRole="button" accessibilityLabel={`Chat with ${person.displayName}`} disabled={busy} onPress={() => openFriendChat(person.userId, person.displayName)} style={[styles.smallAction, busy && styles.actionBusy]}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <><MessageCircle color={colors.forest} size={13} /><Text style={styles.smallActionText}>Chat</Text></>}</Pressable> : !isSelf && relationship?.status === "pending" ? <Text style={styles.friendState}>{relationship.direction === "outgoing" ? "Request sent" : "Respond in Friends"}</Text> : !isSelf ? <Pressable disabled={busy} onPress={() => addFriend(person.userId)} style={styles.smallAction}><Text style={styles.smallActionText}>Add friend</Text></Pressable> : null}
           </View>;
-        })}</View> : <EmptyState icon={Users} title="No members yet" description="Ride owners and approved riders will appear here." /> : <EmptyState icon={ShieldCheck} title="Members are private" description="Request and get approved to see who’s riding." /> : requests.length ? <View style={styles.list}>{requests.map((request) => <View key={request.id} style={styles.personRow}><View style={styles.personCopy}><Text style={styles.personName}>{request.riderName}</Text><Text style={styles.personRole}>{request.message || "Requested a spot"}</Text></View><Pressable accessibilityLabel={`Approve ${request.riderName}`} disabled={busy} onPress={() => review(request, "approved")} style={styles.approveAction}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <Check color={colors.forest} size={17} />}</Pressable><Pressable accessibilityLabel={`Decline ${request.riderName}`} disabled={busy} onPress={() => review(request, "declined")} style={styles.declineAction}><X color="#9B493C" size={16} /></Pressable></View>)}</View> : <EmptyState icon={ShieldCheck} title="No requests yet" description="Pending join requests will appear in this tab." />}
+        })}</View> : <EmptyState icon={Users} title="No members yet" description="Ride owners and approved riders will appear here." /> : <EmptyState icon={ShieldCheck} title="Members are private" description="Request and get approved to see who’s riding." /> : requests.length ? <View style={styles.list}>{requests.map((request) => <View key={request.id} style={styles.personRow}><Avatar initials={request.riderName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", request.avatarPath)} size={38} /><View style={styles.personCopy}><Text style={styles.personName}>{request.riderName}</Text><Text style={styles.personRole}>{request.message || "Requested a spot"}</Text></View><Pressable accessibilityLabel={`Approve ${request.riderName}`} disabled={busy} onPress={() => review(request, "approved")} style={styles.approveAction}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <Check color={colors.forest} size={17} />}</Pressable><Pressable accessibilityLabel={`Decline ${request.riderName}`} disabled={busy} onPress={() => review(request, "declined")} style={styles.declineAction}><X color="#9B493C" size={16} /></Pressable></View>)}</View> : <EmptyState icon={ShieldCheck} title="No requests yet" description="Pending join requests will appear in this tab." />}
       </ScrollView>
     </> : null}
 
@@ -360,7 +365,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.paper },
   header: { minHeight: 54, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.paper },
   back: { width: 30, height: 40, justifyContent: "center" }, headerTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" }, headerAction: { width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen },
-  content: { paddingBottom: 32 }, hero: { paddingHorizontal: 20, paddingTop: 15, paddingBottom: 19 }, status: { color: colors.leaf, fontSize: 8, fontWeight: "800" }, title: { marginTop: 7, color: colors.ink, fontFamily: "Georgia", fontSize: 28 }, route: { marginTop: 5, color: colors.muted, fontSize: 11 }, meta: { marginTop: 13, flexDirection: "row", alignItems: "center", gap: 7 }, metaText: { color: colors.ink, fontSize: 9 },
+  content: { paddingBottom: 32 }, hero: { paddingHorizontal: 20, paddingTop: 15, paddingBottom: 19 }, bannerPressable: { width: "100%", height: 170, marginBottom: 15, overflow: "hidden", borderRadius: 12 }, banner: { width: "100%", height: "100%", resizeMode: "cover" }, status: { color: colors.leaf, fontSize: 8, fontWeight: "800" }, title: { marginTop: 7, color: colors.ink, fontFamily: "Georgia", fontSize: 28 }, route: { marginTop: 5, color: colors.muted, fontSize: 11 }, meta: { marginTop: 13, flexDirection: "row", alignItems: "center", gap: 7 }, metaText: { color: colors.ink, fontSize: 9 },
   tabs: { marginHorizontal: 16, marginBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", gap: 20 }, tab: { paddingBottom: 9 }, activeTab: { borderBottomWidth: 2, borderBottomColor: colors.forest }, tabText: { color: colors.muted, fontSize: 9, fontWeight: "600" }, activeTabText: { color: colors.forest, fontWeight: "800" },
   panel: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface }, sectionTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" }, description: { marginTop: 8, color: colors.muted, fontSize: 9, lineHeight: 15 }, detailRow: { minHeight: 36, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, detailLabel: { color: colors.muted, fontSize: 9 }, detailValue: { color: colors.ink, fontSize: 9, fontWeight: "700" },
   routeMapTitle: { marginTop: 12, marginBottom: 8, color: colors.ink, fontSize: 10, fontWeight: "800" }, routeMap: { height: 210, borderRadius: 9 }, routeMapLoading: { height: 170, alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 9, backgroundColor: "#E8EDDF" }, routeMapLoadingText: { color: colors.muted, fontSize: 9 }, routeMapError: { padding: 12, color: "#9B493C", fontSize: 9, lineHeight: 14, borderRadius: 9, backgroundColor: "#FBF1EB" },
