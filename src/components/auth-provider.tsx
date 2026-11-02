@@ -1,10 +1,11 @@
 import { createContext, PropsWithChildren, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import { getAuthRedirectUrl } from "../lib/auth-links";
 import { clearStore } from "../lib/local-store";
 import { unregisterPushTokens } from "../lib/notifications";
 
-type AuthResult = { error: string | null };
+type AuthResult = { error: string | null; reactivated?: boolean };
 type SignUpResult = AuthResult & { hasSession: boolean };
 
 type AuthContextValue = {
@@ -14,8 +15,6 @@ type AuthContextValue = {
   userEmail: string | null;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string) => Promise<SignUpResult>;
-  verifySignupOtp: (email: string, otp: string) => Promise<AuthResult>;
-  resendSignupOtp: (email: string) => Promise<AuthResult>;
   signOut: () => Promise<AuthResult>;
 };
 
@@ -51,26 +50,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   async function signIn(email: string, password: string): Promise<AuthResult> {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    if (error) return { error: error.message };
+    const { data: reactivated, error: reactivationError } = await supabase.rpc("reactivate_account");
+    if (reactivationError) {
+      await supabase.auth.signOut({ scope: "local" });
+      await clearStore();
+      return { error: `Could not verify account status: ${reactivationError.message}` };
+    }
+    return { error: null, reactivated: Boolean(reactivated) };
   }
 
   async function signUp(name: string, email: string, password: string): Promise<SignUpResult> {
+    const emailRedirectTo = getAuthRedirectUrl("/activate");
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: name } },
+      options: {
+        data: { full_name: name },
+        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+      },
     });
     return { error: error?.message ?? null, hasSession: Boolean(data.session) };
-  }
-
-  async function verifySignupOtp(email: string, otp: string): Promise<AuthResult> {
-    const { error } = await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
-    return { error: error?.message ?? null };
-  }
-
-  async function resendSignupOtp(email: string): Promise<AuthResult> {
-    const { error } = await supabase.auth.resend({ type: "signup", email });
-    return { error: error?.message ?? null };
   }
 
   async function signOut(): Promise<AuthResult> {
@@ -87,7 +87,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }
 
   return (
-    <AuthContext.Provider value={{ ready, isSignedIn: Boolean(session), userId: session?.user.id ?? null, userEmail: session?.user.email ?? null, signIn, signUp, verifySignupOtp, resendSignupOtp, signOut }}>
+    <AuthContext.Provider value={{ ready, isSignedIn: Boolean(session), userId: session?.user.id ?? null, userEmail: session?.user.email ?? null, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -6,7 +6,7 @@ import { useRouter } from "expo-router";
 import { Avatar } from "./avatar";
 import { colors } from "./theme";
 import { useAuth } from "./auth-provider";
-import { loadProfile, ProfileData } from "../lib/app-data";
+import { getImagePublicUrl, loadProfile, ProfileData } from "../lib/app-data";
 import { useStoreVersion } from "../lib/store-events";
 import { loadNotifications, NotificationData } from "../lib/notifications";
 
@@ -57,7 +57,7 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
             <Bell color={colors.ink} size={18} />
             {unreadCount > 0 && <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text></View>}
           </Pressable>
-          <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} size={36} /></Pressable>
+          <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} imageUrl={getImagePublicUrl("profile-images", profile?.avatarPath ?? null)} size={36} /></Pressable>
         </View>
       </View>
       <View style={styles.titleBlock}>

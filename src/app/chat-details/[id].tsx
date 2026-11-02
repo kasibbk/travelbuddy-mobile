@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, ArrowRight, Bike, CalendarDays, MessageCircle, Users } from "lucide-react-native";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
+import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { colors } from "../../components/theme";
-import { ConversationData, ConversationParticipantData, createDirectConversation, loadConversationParticipants, loadConversations, loadFriendRequests, loadSharedActiveRides, SharedRideData } from "../../lib/app-data";
+import { ConversationData, ConversationParticipantData, createDirectConversation, getImagePublicUrl, loadConversationParticipants, loadConversations, loadFriendRequests, loadSharedActiveRides, SharedRideData } from "../../lib/app-data";
 
 export default function ChatDetailsScreen() {
   const router = useRouter();
@@ -22,6 +23,7 @@ export default function ChatDetailsScreen() {
   const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [bannerPreviewOpen, setBannerPreviewOpen] = useState(false);
   const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
@@ -69,16 +71,25 @@ export default function ChatDetailsScreen() {
     }
   }
 
+  const directPeer = conversation?.kind === "direct"
+    ? participants.find((person) => person.userId === conversation.otherUserId)
+    : null;
+  const groupBannerUrl = conversation?.kind === "ride"
+    ? getImagePublicUrl("ride-banners", conversation.bannerImagePath)
+    : null;
+
   return <View style={styles.screen}>
-    <View style={styles.header}><Pressable accessibilityLabel="Back to chat" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Chat details</Text><View style={{ flex: 1 }} /></View>
+    <View style={styles.header}><Pressable accessibilityLabel="Back to chat" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text numberOfLines={1} style={styles.headerTitle}>{conversation?.kind === "ride" ? conversation.title : "Chat details"}</Text><View style={{ flex: 1 }} /></View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error || !conversation ? <EmptyState icon={MessageCircle} title="Chat details unavailable" description={error || "This conversation is unavailable."} /> : <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.titleBlock}><View style={styles.titleIcon}><MessageCircle color={colors.lime} size={17} /></View><Text style={styles.title}>{conversation.title}</Text><Text style={styles.subtitle}>{conversation.detail}</Text></View>
+      {groupBannerUrl && <Pressable accessibilityRole="imagebutton" accessibilityLabel={`View ${conversation.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={styles.groupBannerPressable}><Image source={{ uri: groupBannerUrl }} resizeMode="cover" style={styles.groupBanner} /></Pressable>}
+      <View style={styles.titleBlock}>{directPeer ? <Avatar initials={directPeer.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", directPeer.avatarPath)} size={58} /> : !groupBannerUrl ? <View style={styles.titleIcon}><MessageCircle color={colors.lime} size={17} /></View> : null}{!groupBannerUrl && <><Text style={styles.title}>{conversation.title}</Text><Text style={styles.subtitle}>{conversation.detail}</Text></>}</View>
+      <ImagePreviewModal imageUrl={groupBannerUrl} visible={bannerPreviewOpen} label={conversation.title} onClose={() => setBannerPreviewOpen(false)} />
       {conversation.kind === "ride" && conversation.rideId && <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/rides/[id]", params: { id: conversation.rideId! } })} style={styles.rideLink}><View style={styles.rideIcon}><Bike color={colors.forest} size={16} /></View><View style={styles.rideCopy}><Text style={styles.rideTitle}>Ride details</Text><Text style={styles.rideSubtitle}>View route, members, and ride status</Text></View><ArrowRight color={colors.muted} size={16} /></Pressable>}
       <View style={styles.sectionHeader}><Users color={colors.leaf} size={16} /><Text style={styles.sectionTitle}>Participants</Text><Text style={styles.count}>{participants.length}</Text></View>
       {conversation.kind === "ride" && !!actionError && <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text>}
       {participants.length ? <View style={styles.peopleList}>{participants.map((person) => {
         const isSelf = person.userId === userId;
-        const personContent = <><Avatar initials={person.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} size={36} /><View style={styles.personCopy}><Text style={styles.personName}>{person.displayName}{isSelf ? " · You" : ""}</Text><Text style={styles.personDetail}>{new Date(person.joinedAt).toLocaleDateString()}</Text></View></>;
+        const personContent = <><Avatar initials={person.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", person.avatarPath)} size={36} /><View style={styles.personCopy}><Text style={styles.personName}>{person.displayName}{isSelf ? " · You" : ""}</Text><Text style={styles.personDetail}>{new Date(person.joinedAt).toLocaleDateString()}</Text></View></>;
         return <View key={person.userId} style={styles.personRow}>
           {isSelf ? <View style={styles.personLink}>{personContent}</View> : <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/users/[id]", params: { id: person.userId } })} style={styles.personLink}>{personContent}</Pressable>}
           {conversation.kind === "ride" && !isSelf && acceptedFriendIds.includes(person.userId) ? <Pressable accessibilityRole="button" accessibilityLabel={`Chat with ${person.displayName}`} disabled={!!chattingUserId} onPress={() => openDirectChat(person)} style={[styles.chatAction, !!chattingUserId && styles.chatActionBusy]}>{chattingUserId === person.userId ? <ActivityIndicator size="small" color={colors.forest} /> : <MessageCircle color={colors.forest} size={15} />}</Pressable> : !isSelf ? <ArrowRight color={colors.subtle} size={14} /> : null}
@@ -97,6 +108,8 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 30 },
   loader: { marginTop: 28 },
   titleBlock: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18, alignItems: "center" },
+  groupBannerPressable: { width: "100%", height: 110 },
+  groupBanner: { width: "100%", height: "100%" },
   titleIcon: { width: 36, height: 36, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   title: { marginTop: 9, color: colors.ink, fontFamily: "Georgia", fontSize: 22, textAlign: "center" },
   subtitle: { marginTop: 4, color: colors.muted, fontSize: 9 },

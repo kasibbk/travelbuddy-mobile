@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ArrowLeft, Bike, ChevronRight, LocateFixed, LogOut, MapPin, ShieldCheck, UserRound } from "lucide-react-native";
+import { ArrowLeft, Bike, Camera, ChevronRight, LocateFixed, MapPin, ShieldCheck, UserRound } from "lucide-react-native";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { PageShell } from "../../components/page-shell";
+import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { colors } from "../../components/theme";
 import { useAuth } from "../../components/auth-provider";
-import { hasSavedProfileLocation, loadProfile, ProfileData, removeProfileLocation, saveProfileLocation, updateProfile, updateProfileDiscoverable } from "../../lib/app-data";
+import { getImagePublicUrl, hasSavedProfileLocation, loadProfile, ProfileData, removeProfileLocation, saveProfileLocation, updateProfile, updateProfileDiscoverable, uploadProfilePicture } from "../../lib/app-data";
 import { LocationService } from "../../services/location";
 import type { LocationSearchResult } from "../../services/location/types";
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { ready, userId, userEmail, signOut } = useAuth();
+  const { ready, userId, userEmail } = useAuth();
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [homeCity, setHomeCity] = useState("");
@@ -29,6 +31,8 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pictureBusy, setPictureBusy] = useState(false);
+  const [picturePreviewOpen, setPicturePreviewOpen] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [discoverabilityBusy, setDiscoverabilityBusy] = useState(false);
   const [error, setError] = useState("");
@@ -137,6 +141,32 @@ export default function ProfileScreen() {
     }
   }
 
+  async function changeProfilePicture() {
+    if (!userId || pictureBusy) return;
+    setPictureBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset) throw new Error("No image was selected.");
+      const updated = await uploadProfilePicture(userId, { uri: asset.uri, mimeType: asset.mimeType });
+      setProfile(updated);
+      setNotice("Profile picture updated.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not upload your profile picture.");
+    } finally {
+      setPictureBusy(false);
+    }
+  }
+
   async function captureLocation() {
     if (!userId || locationBusy) return;
     setLocationBusy(true);
@@ -198,12 +228,13 @@ export default function ProfileScreen() {
   }
 
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() ?? "";
+  const profilePictureUrl = getImagePublicUrl("profile-images", profile?.avatarPath ?? null);
   return <PageShell refreshing={refreshing} onRefresh={refreshProfile} focusedFieldY={focusedFieldY}>
     <View style={styles.topbar}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><View style={styles.brandMark}><Bike color={colors.lime} size={17} /></View><Text style={styles.topTitle}>Your profile</Text><View style={{ flex: 1 }} /></View>
     <View style={styles.heading}><Text style={styles.eyebrow}>YOUR CORNER OF THE MAP</Text><Text style={styles.title}>Your profile</Text><Text style={styles.subtitle}>Manage your details and nearby discovery.</Text></View>
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !profile ? <EmptyState icon={UserRound} title="Profile couldn’t load" description={error} /> : profile ? <>
       <View onLayout={(event) => { profileCardY.current = event.nativeEvent.layout.y; }} style={styles.profileCard}>
-        <View style={styles.identity}><Avatar initials={initials || "R"} size={50} /><View style={styles.identityText}><Text style={styles.name}>{profile.displayName}</Text><Text style={styles.member}>{userEmail ?? "Signed-in rider"}</Text></View></View>
+        <View style={styles.identity}>{profilePictureUrl ? <Pressable accessibilityRole="button" accessibilityLabel="View profile picture" onPress={() => setPicturePreviewOpen(true)}><Avatar initials={initials || "R"} imageUrl={profilePictureUrl} size={50} /></Pressable> : <Avatar initials={initials || "R"} size={50} />}<View style={styles.identityText}><Text style={styles.name}>{profile.displayName}</Text><Text style={styles.member}>{userEmail ?? "Signed-in rider"}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Change profile picture" disabled={pictureBusy} onPress={() => void changeProfilePicture()} style={styles.pictureButton}>{pictureBusy ? <ActivityIndicator size="small" color={colors.forest} /> : <Camera color={colors.forest} size={16} />}</Pressable></View>
         <Text style={styles.label}>YOUR NAME</Text><View onLayout={(event) => { displayNameY.current = event.nativeEvent.layout.y; }}><TextInput value={displayName} onFocus={() => setFocusedFieldY(profileCardY.current + displayNameY.current)} onChangeText={setDisplayName} autoComplete="name" maxLength={60} style={styles.input} /></View>
         <Text style={styles.label}>HOME LOCATION</Text><View onLayout={(event) => { homeCityY.current = event.nativeEvent.layout.y; }} style={styles.cityField}><MapPin color={colors.leaf} size={14} /><TextInput value={homeCity} onFocus={() => { setFocusedFieldY(profileCardY.current + homeCityY.current); setSearchHomeLocationEnabled(true); }} onChangeText={(value) => { homeLocationSearchRequest.current += 1; setSearchingHomeLocation(false); setHomeCity(value); setSearchHomeLocationEnabled(true); setHomeLocationResults([]); setHomeLocationSearchError(""); }} returnKeyType="search" placeholder="Start typing a city or location" placeholderTextColor={colors.subtle} maxLength={100} style={styles.cityInput} />{searchingHomeLocation && <ActivityIndicator size="small" color={colors.forest} />}</View>
         {homeLocationResults.length > 0 && <View style={styles.locationResults}>{homeLocationResults.map((result, index) => <Pressable key={`${result.coords.lat}:${result.coords.lng}:${index}`} accessibilityRole="button" onPress={() => selectHomeLocation(result)} style={styles.locationResult}><MapPin color={colors.leaf} size={13} /><Text numberOfLines={2} style={styles.locationResultText}>{result.label}</Text></Pressable>)}</View>}
@@ -224,18 +255,17 @@ export default function ProfileScreen() {
       </View>
     </> : <EmptyState icon={UserRound} title="Profile not found" description="This account has no profile record yet. Contact support to restore its profile." />}
     <Pressable style={styles.accountLink} onPress={() => router.push("/account/settings")}><View><Text style={styles.accountTitle}>Account &amp; sign-in</Text><Text style={styles.accountSubtitle}>{userEmail ?? "Supabase account"}</Text></View><ChevronRight color={colors.muted} size={18} /></Pressable>
-    <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOut}><LogOut color="#9B684F" size={15} /><Text style={styles.signOutText}>Sign out</Text></Pressable>
+    <ImagePreviewModal imageUrl={profilePictureUrl} visible={picturePreviewOpen} label={profile?.displayName ?? "Profile"} onClose={() => setPicturePreviewOpen(false)} />
   </PageShell>;
 }
 
 const styles = StyleSheet.create({
   topbar: { height: 48, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 9 }, back: { width: 26, height: 36, alignItems: "flex-start", justifyContent: "center" }, brandMark: { width: 27, height: 27, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, topTitle: { color: colors.ink, fontSize: 12, fontWeight: "800" },
   heading: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 15 }, eyebrow: { color: colors.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1 }, title: { marginTop: 6, color: colors.ink, fontFamily: "Georgia", fontSize: 29, fontWeight: "500" }, subtitle: { marginTop: 4, color: colors.muted, fontSize: 10 },
-  profileCard: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, identity: { marginBottom: 8, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11 }, identityText: { flex: 1, gap: 4 }, name: { color: colors.ink, fontFamily: "Georgia", fontSize: 19 }, member: { color: colors.muted, fontSize: 8 },
+  profileCard: { marginHorizontal: 16, padding: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, identity: { marginBottom: 8, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 11 }, identityText: { flex: 1, gap: 4 }, name: { color: colors.ink, fontFamily: "Georgia", fontSize: 19 }, member: { color: colors.muted, fontSize: 8 }, pictureButton: { width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen },
   label: { marginTop: 10, marginBottom: 5, color: colors.muted, fontSize: 7, fontWeight: "800", letterSpacing: 0.6 }, input: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", color: colors.ink, fontSize: 10 }, bioInput: { minHeight: 67, paddingTop: 9, textAlignVertical: "top" }, cityField: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 7, backgroundColor: "#FDFEFB", flexDirection: "row", alignItems: "center", gap: 7 }, cityInput: { flex: 1, color: colors.ink, fontSize: 10 }, citySearchButton: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: colors.paleGreen }, locationResults: { marginTop: 4, overflow: "hidden", borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: "#FDFEFB" }, locationResult: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 9, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: colors.line }, locationResultText: { flex: 1, color: colors.ink, fontSize: 8, lineHeight: 12 }, locationSearchError: { marginTop: 5, color: "#9B493C", fontSize: 8 }, paceChoices: { flexDirection: "row", gap: 5 }, paceChoice: { flex: 1, minHeight: 31, borderWidth: 1, borderColor: colors.line, borderRadius: 6, alignItems: "center", justifyContent: "center" }, paceChoiceActive: { borderColor: colors.forest, backgroundColor: colors.forest }, paceText: { color: colors.muted, fontSize: 7 }, paceTextActive: { color: colors.surface, fontWeight: "700" },
   saveButton: { minHeight: 39, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, saveText: { color: colors.surface, fontSize: 10, fontWeight: "700" }, error: { marginTop: 8, color: "#9B493C", fontSize: 8, lineHeight: 12 }, notice: { marginTop: 8, color: colors.leaf, fontSize: 8, lineHeight: 12 }, buttonBusy: { opacity: 0.65 },
   loader: { marginVertical: 28 },
   privacyCard: { marginHorizontal: 16, marginTop: 13, padding: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface }, privacyHeading: { marginBottom: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, cardTitle: { color: colors.ink, fontSize: 12, fontWeight: "700" }, cardSubtitle: { marginTop: 3, color: colors.muted, fontSize: 8, lineHeight: 12 }, settingRow: { minHeight: 55, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, settingCopy: { flex: 1, gap: 3 }, settingTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, settingDetail: { color: colors.muted, fontSize: 7, lineHeight: 11 }, locationRow: { minHeight: 52, borderTopWidth: 1, borderTopColor: "#EEF0E9", flexDirection: "row", alignItems: "center", gap: 8 }, locationIcon: { width: 28, height: 28, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen }, locationCopy: { flex: 1, gap: 3 }, locationButton: { minHeight: 38, marginTop: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.paleGreen }, locationButtonText: { color: colors.forest, fontSize: 9, fontWeight: "700" }, removeButton: { minHeight: 33, marginTop: 4, alignItems: "center", justifyContent: "center" }, removeText: { color: "#9B684F", fontSize: 8, fontWeight: "700" },
   accountLink: { minHeight: 59, marginHorizontal: 16, marginTop: 13, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, accountTitle: { color: colors.ink, fontSize: 9, fontWeight: "700" }, accountSubtitle: { marginTop: 4, color: colors.muted, fontSize: 8 },
-  signOut: { minHeight: 42, marginHorizontal: 20, marginTop: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, signOutText: { color: "#9B684F", fontSize: 9, fontWeight: "700" },
 });

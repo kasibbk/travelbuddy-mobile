@@ -1,6 +1,8 @@
 import { CalendarDays, Clock3, Map, MapPin, Users } from "lucide-react-native";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { RideCardData, RideRequestData } from "../lib/app-data";
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { getImagePublicUrl, RideCardData, RideRequestData } from "../lib/app-data";
+import { ImagePreviewModal } from "./image-preview-modal";
 import { colors } from "./theme";
 
 type RideCardProps = {
@@ -16,27 +18,34 @@ type RideCardProps = {
 };
 
 export function RideCard({ ride, requestState, viewerIsOwner = false, actionPending = false, actionDisabled = false, actionError = "", onViewDetails, onRequestSpot, onCancelRequest }: RideCardProps) {
+  const [bannerPreviewOpen, setBannerPreviewOpen] = useState(false);
+  const bannerUrl = getImagePublicUrl("ride-banners", ride.bannerImagePath);
   return (
-    <View style={styles.card}>
-      <View style={styles.routePreview}>
-        <View style={styles.mapIcon}><Map color={colors.leaf} size={18} /></View>
-        <View style={styles.metrics}>
-          <Text style={styles.distanceText}>{ride.distance}</Text>
-          <View style={styles.durationLine}><Clock3 color={colors.forest} size={11} /><Text style={styles.durationText}>{ride.duration}</Text></View>
+    <View>
+      <View style={styles.card}>
+        <Pressable accessibilityRole={bannerUrl ? "button" : undefined} accessibilityLabel={bannerUrl ? `View ${ride.title} banner` : undefined} disabled={!bannerUrl} onPress={() => setBannerPreviewOpen(true)} style={styles.routePreview}>
+          {bannerUrl && <Image source={{ uri: bannerUrl }} style={[StyleSheet.absoluteFill, styles.bannerImage]} />}
+          {bannerUrl && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.bannerShade]} />}
+          <View style={styles.mapIcon}><Map color={colors.leaf} size={18} /></View>
+          <View style={styles.metrics}>
+            <Text style={styles.distanceText}>{ride.distance}</Text>
+            <View style={styles.durationLine}><Clock3 color={colors.forest} size={11} /><Text style={styles.durationText}>{ride.duration}</Text></View>
+          </View>
+        </Pressable>
+        <View style={styles.body}>
+          <View style={styles.dateLine}><CalendarDays color={colors.leaf} size={13} /><Text style={styles.dateText}>{ride.date} · {ride.time}</Text></View>
+          <Text style={styles.title}>{ride.title}</Text>
+          <View style={styles.routeLine}><MapPin color={colors.orange} size={13} /><Text numberOfLines={1} style={styles.routeText}>{ride.route}</Text></View>
+          <View style={styles.footer}>
+            <View style={styles.riders}><Users color={colors.muted} size={14} /><Text style={styles.riderText}>Up to {ride.capacity} riders</Text></View>
+            <Text style={styles.hostText}>{ride.host}</Text>
+          </View>
+          {onViewDetails && <Pressable accessibilityRole="button" onPress={onViewDetails} style={styles.detailsButton}><Text style={styles.detailsButtonText}>Ride details</Text></Pressable>}
+          {viewerIsOwner ? <Text style={styles.ownerNote}>You host this ride</Text> : requestState?.status === "approved" ? <Text style={styles.approvedNote}>Your request is approved</Text> : onRequestSpot ? <Pressable accessibilityRole="button" accessibilityState={{ disabled: actionPending || actionDisabled }} disabled={actionPending || actionDisabled} onPress={requestState?.status === "pending" ? onCancelRequest : onRequestSpot} style={[styles.requestButton, requestState?.status === "pending" && styles.cancelButton, (actionPending || actionDisabled) && styles.pendingButton]}>{actionPending ? <ActivityIndicator size="small" color={requestState?.status === "pending" ? colors.forest : colors.surface} /> : <Text style={[styles.requestButtonText, requestState?.status === "pending" && styles.cancelButtonText]}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable> : null}
+          {!!actionError && <Text accessibilityRole="alert" style={styles.actionError}>{actionError}</Text>}
         </View>
       </View>
-      <View style={styles.body}>
-        <View style={styles.dateLine}><CalendarDays color={colors.leaf} size={13} /><Text style={styles.dateText}>{ride.date} · {ride.time}</Text></View>
-        <Text style={styles.title}>{ride.title}</Text>
-        <View style={styles.routeLine}><MapPin color={colors.orange} size={13} /><Text numberOfLines={1} style={styles.routeText}>{ride.route}</Text></View>
-        <View style={styles.footer}>
-          <View style={styles.riders}><Users color={colors.muted} size={14} /><Text style={styles.riderText}>Up to {ride.capacity} riders</Text></View>
-          <Text style={styles.hostText}>{ride.host}</Text>
-        </View>
-        {onViewDetails && <Pressable accessibilityRole="button" onPress={onViewDetails} style={styles.detailsButton}><Text style={styles.detailsButtonText}>Ride details</Text></Pressable>}
-        {viewerIsOwner ? <Text style={styles.ownerNote}>You host this ride</Text> : requestState?.status === "approved" ? <Text style={styles.approvedNote}>Your request is approved</Text> : onRequestSpot ? <Pressable accessibilityRole="button" accessibilityState={{ disabled: actionPending || actionDisabled }} disabled={actionPending || actionDisabled} onPress={requestState?.status === "pending" ? onCancelRequest : onRequestSpot} style={[styles.requestButton, requestState?.status === "pending" && styles.cancelButton, (actionPending || actionDisabled) && styles.pendingButton]}>{actionPending ? <ActivityIndicator size="small" color={requestState?.status === "pending" ? colors.forest : colors.surface} /> : <Text style={[styles.requestButtonText, requestState?.status === "pending" && styles.cancelButtonText]}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable> : null}
-        {!!actionError && <Text accessibilityRole="alert" style={styles.actionError}>{actionError}</Text>}
-      </View>
+      <ImagePreviewModal imageUrl={bannerUrl} visible={bannerPreviewOpen} label={ride.title} onClose={() => setBannerPreviewOpen(false)} />
     </View>
   );
 }
@@ -44,6 +53,8 @@ export function RideCard({ ride, requestState, viewerIsOwner = false, actionPend
 const styles = StyleSheet.create({
   card: { overflow: "hidden", borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface },
   routePreview: { minHeight: 86, paddingHorizontal: 13, paddingVertical: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#E6ECDF" },
+  bannerImage: { resizeMode: "cover" },
+  bannerShade: { backgroundColor: "#13251F66" },
   mapIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   metrics: { alignItems: "flex-end", gap: 6 },
   distanceText: { color: colors.muted, fontSize: 9, fontWeight: "700" },
