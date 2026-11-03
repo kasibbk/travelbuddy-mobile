@@ -462,13 +462,11 @@ export async function loadPendingAdminRequests(userId: string, force = false): P
   }, { force });
 }
 
-export async function loadNearbyRiders(userId: string, force = false): Promise<NearbyRiderData[]> {
-  return localFirst(userId, "nearby-riders-v2", async () => {
-    const { data, error } = await supabase.rpc("nearby_riders", { p_radius_meters: 25000, p_limit: 25 });
-    if (error) throw error;
-    return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; home_city: string | null; approximate_distance_km: number }[])
-      .map((rider) => ({ id: rider.user_id, name: rider.display_name, avatarPath: rider.avatar_path, city: rider.home_city, distanceKm: rider.approximate_distance_km }));
-  }, { force });
+export async function loadNearbyRiders(_userId: string, _force = false): Promise<NearbyRiderData[]> {
+  const { data, error } = await supabase.rpc("nearby_riders", { p_radius_meters: 25000, p_limit: 25 });
+  if (error) throw error;
+  return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; home_city: string | null; approximate_distance_km: number }[])
+    .map((rider) => ({ id: rider.user_id, name: rider.display_name, avatarPath: rider.avatar_path, city: rider.home_city, distanceKm: rider.approximate_distance_km }));
 }
 
 export async function searchPublicUsers(query: string): Promise<PublicUserSearchData[]> {
@@ -955,40 +953,11 @@ export async function uploadRideBannerImage(userId: string, rideId: string, asse
   return uploadImage("ride-banners", path, asset);
 }
 
-export async function hasSavedProfileLocation(userId: string, force = false): Promise<boolean> {
-  return localFirst(userId, "has-location", async () => {
-    const { data, error } = await supabase.from("profile_locations").select("user_id").eq("user_id", userId).maybeSingle();
-    if (error) throw error;
-    return Boolean(data);
-  }, { force });
-}
-
-export async function saveProfileLocation(userId: string, latitude: number, longitude: number): Promise<void> {
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    throw new Error("The device returned an invalid location.");
-  }
-  const { error } = await supabase.from("profile_locations").upsert({
-    user_id: userId,
-    location: `SRID=4326;POINT(${longitude} ${latitude})`,
-  }, { onConflict: "user_id" });
-  if (error) throw error;
-  await writeStored(userId, "has-location", true);
-  await refreshStored(loadNearbyRiders(userId, true));
-}
-
-export async function removeProfileLocation(userId: string): Promise<void> {
-  const { error } = await supabase.from("profile_locations").delete().eq("user_id", userId);
-  if (error) throw error;
-  await writeStored(userId, "has-location", false);
-  await refreshStored(loadNearbyRiders(userId, true));
-}
-
 // Pulls every top-level dataset into storage; screens only read from storage afterwards.
 export async function syncAll(userId: string): Promise<void> {
   const conversationsPromise = loadConversations(userId, true);
   const results = await Promise.allSettled([
     loadProfile(userId, true),
-    hasSavedProfileLocation(userId, true),
     loadOpenRides(userId, true),
     loadNearbyRiders(userId, true),
     loadFriendRequests(userId, true),
@@ -1000,7 +969,7 @@ export async function syncAll(userId: string): Promise<void> {
   ]);
   const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
 
-  const conversationsResult = results[5];
+  const conversationsResult = results[4];
   if (conversationsResult.status === "fulfilled") {
     const messageResults = await Promise.allSettled(
       conversationsResult.value.map((conversation) => syncMessages(conversation.id, userId)),

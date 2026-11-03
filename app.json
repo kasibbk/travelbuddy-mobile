@@ -37,7 +37,11 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "TravelBuddy uses your location to suggest nearby riders. Your exact coordinates are never shown to other riders."
+          "locationWhenInUsePermission": "TravelBuddy uses your location to suggest nearby riders and share your live location when you turn sharing on.",
+          "locationAlwaysAndWhenInUsePermission": "TravelBuddy shares your live location with accepted friends who also share theirs while live sharing is on, including when the app is in the background.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [

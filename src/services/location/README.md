@@ -8,6 +8,8 @@ Ride details geocode the saved start/destination labels, calculate a motor-vehic
 
 The map picker and profile home-location field provide explicit location searches with selectable results. Searches are submitted by the user and are not autocomplete requests.
 
+Nearby discovery and live friend sharing use one background live-location stream, with independent preferences. Nearby discovery controls whether a rider appears in Nearby and exposes only approximate distance; the friend-sharing preference controls exact map visibility. A stream runs while either preference is enabled and stops, clearing the stored location, when both are off. Sharing is visible only between active, accepted friends with no block in either direction when both have sharing enabled. Locations older than five minutes are hidden and purged on later location updates or map refreshes. The Friends map listens for realtime inserts/updates and refreshes periodically so expired locations disappear even when realtime is unavailable. Sign-out stops tracking and clears the current location without changing either preference; tracking resumes after sign-in when a preference is enabled and permissions remain available. Operating-system force-stops or revoked permissions can interrupt updates. Apply the live-location database migrations and rebuild the native app to add the background location permissions and foreground-service configuration.
+
 For Google, provide:
 
 - `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` for the Google Distance Matrix, Directions, and Geocoding web service requests.

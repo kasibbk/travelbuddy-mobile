@@ -6,9 +6,12 @@ type UnifiedMapViewProps = {
   userLocation: AppCoords | null;
   destinationLocation: AppCoords | null;
   routePoints: AppCoords[];
+  friendMarkers?: { id: string; location: AppCoords; title: string }[];
   style?: StyleProp<ViewStyle>;
   selectionMode?: boolean;
   readOnly?: boolean;
+  fitToMarkers?: boolean;
+  showUserLocationTitle?: boolean;
   userLocationTitle?: string;
   destinationTitle?: string;
   cameraTarget?: AppCoords | null;
@@ -16,7 +19,7 @@ type UnifiedMapViewProps = {
   onLocationSelect?: (location: AppCoords) => void;
 };
 
-export function UnifiedMapView({ userLocation, destinationLocation, routePoints, style, selectionMode = false, readOnly = false, selectedLocation, onLocationSelect }: UnifiedMapViewProps) {
+export function UnifiedMapView({ userLocation, destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", selectedLocation, onLocationSelect }: UnifiedMapViewProps) {
   const mapUrl = USE_GOOGLE_MAPS
     ? "https://maps.google.com"
     : "https://www.openstreetmap.org/fixthemap";
@@ -27,7 +30,9 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
   return <View style={[styles.container, selectionMode && styles.selectionContainer, style]}>
     <Text style={styles.title}>Map preview is available in the mobile app</Text>
     <Text style={styles.details}>
-      {`Start: ${userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : "not set"}\nDestination: ${destinationLocation ? `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}` : "not set"}\nRoute points: ${routePoints.length}`}
+      {friendMarkers.length || (showUserLocationTitle && userLocation)
+        ? `${showUserLocationTitle && userLocation ? `${userLocationTitle}: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}\n` : ""}${friendMarkers.length ? `${friendMarkers.length} friend${friendMarkers.length === 1 ? "" : "s"} sharing live location\n${friendMarkers.map((friend) => friend.title).join(", ")}` : "No friends sharing live location"}`
+        : `Start: ${userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : "not set"}\nDestination: ${destinationLocation ? `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}` : "not set"}\nRoute points: ${routePoints.length}`}
     </Text>
     {selectionMode && <View style={styles.webPicker}>
       <Text style={styles.webPickerText}>Map pin selection is available in the mobile app.</Text>
@@ -36,7 +41,7 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
       </Pressable>
       {selectedLocation && <Text style={styles.details}>{`${selectedLocation.lat.toFixed(5)}, ${selectedLocation.lng.toFixed(5)}`}</Text>}
     </View>}
-    {!readOnly && <Pressable accessibilityRole="link" onPress={openMap}><Text style={styles.link}>Open map</Text></Pressable>}
+    {!readOnly && !fitToMarkers && <Pressable accessibilityRole="link" onPress={openMap}><Text style={styles.link}>Open map</Text></Pressable>}
     {!USE_GOOGLE_MAPS && <Text style={styles.attribution}>© OpenStreetMap contributors · OpenFreeMap</Text>}
   </View>;
 }

@@ -10,6 +10,7 @@ import { EmptyState } from "../../components/empty-state";
 import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { CreateRideModal } from "../../components/create-ride-modal";
 import { UnifiedMapView } from "../../components/UnifiedMapView";
+import { PageScrollLockContext } from "../../components/page-shell";
 import { colors } from "../../components/theme";
 import { LocationService } from "../../services/location";
 import type { AppCoords } from "../../services/location/types";
@@ -60,6 +61,7 @@ export default function RideDetailsScreen() {
   const [canSeeMembers, setCanSeeMembers] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [mapInteracting, setMapInteracting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cancelDialog, setCancelDialog] = useState(false);
@@ -309,7 +311,8 @@ export default function RideDetailsScreen() {
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Ride details</Text><View style={{ flex: 1 }} />{conversation && <Pressable accessibilityLabel="Open ride chat" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: conversation.id } })} style={styles.headerAction}><MessageCircle color={colors.forest} size={18} /></Pressable>}</View>
     <ImagePreviewModal imageUrl={bannerUrl} visible={bannerPreviewOpen} label={ride?.title ?? "Ride"} onClose={() => setBannerPreviewOpen(false)} />
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !ride ? <EmptyState icon={CalendarDays} title="Ride unavailable" description={error} /> : ride ? <>
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
+      <PageScrollLockContext.Provider value={setMapInteracting}>
+        <ScrollView scrollEnabled={!mapInteracting} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
         <View style={styles.hero}>{bannerUrl && <Pressable accessibilityRole="button" accessibilityLabel={`View ${ride.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={styles.bannerPressable}><Image source={{ uri: bannerUrl }} style={styles.banner} /></Pressable>}<Text style={styles.status}>{ride.status === "cancelled" ? "CANCELLED" : ride.status === "completed" ? "COMPLETED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
         <View style={styles.tabs}>{tabs.map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, item === tab && styles.activeTab]}><Text style={[styles.tabText, item === tab && styles.activeTabText]}>{item}{item === "Requests" && requests.length ? ` · ${requests.length}` : ""}</Text></Pressable>)}</View>
 
@@ -325,7 +328,7 @@ export default function RideDetailsScreen() {
               userLocation={currentRoutePreview.start}
               destinationLocation={currentRoutePreview.destination}
               routePoints={currentRoutePreview.points}
-              readOnly
+              fitToMarkers
               userLocationTitle="Starting point"
               destinationTitle="Destination"
               style={styles.routeMap}
@@ -347,7 +350,8 @@ export default function RideDetailsScreen() {
             {!isSelf && relationship?.status === "accepted" ? <Pressable accessibilityRole="button" accessibilityLabel={`Chat with ${person.displayName}`} disabled={busy} onPress={() => openFriendChat(person.userId, person.displayName)} style={[styles.smallAction, busy && styles.actionBusy]}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <><MessageCircle color={colors.forest} size={13} /><Text style={styles.smallActionText}>Chat</Text></>}</Pressable> : !isSelf && relationship?.status === "pending" ? <Text style={styles.friendState}>{relationship.direction === "outgoing" ? "Request sent" : "Respond in Friends"}</Text> : !isSelf ? <Pressable disabled={busy} onPress={() => addFriend(person.userId)} style={styles.smallAction}><Text style={styles.smallActionText}>Add friend</Text></Pressable> : null}
           </View>;
         })}</View> : <EmptyState icon={Users} title="No members yet" description="Ride owners and approved riders will appear here." /> : <EmptyState icon={ShieldCheck} title="Members are private" description="Request and get approved to see who’s riding." /> : requests.length ? <View style={styles.list}>{requests.map((request) => <View key={request.id} style={styles.personRow}><Avatar initials={request.riderName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", request.avatarPath)} size={38} /><View style={styles.personCopy}><Text style={styles.personName}>{request.riderName}</Text><Text style={styles.personRole}>{request.message || "Requested a spot"}</Text></View><Pressable accessibilityLabel={`Approve ${request.riderName}`} disabled={busy} onPress={() => review(request, "approved")} style={styles.approveAction}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <Check color={colors.forest} size={17} />}</Pressable><Pressable accessibilityLabel={`Decline ${request.riderName}`} disabled={busy} onPress={() => review(request, "declined")} style={styles.declineAction}><X color="#9B493C" size={16} /></Pressable></View>)}</View> : <EmptyState icon={ShieldCheck} title="No requests yet" description="Pending join requests will appear in this tab." />}
-      </ScrollView>
+        </ScrollView>
+      </PageScrollLockContext.Provider>
     </> : null}
 
     {!!error && !!ride && <Text accessibilityRole="alert" style={styles.floatingError}>{error}</Text>}

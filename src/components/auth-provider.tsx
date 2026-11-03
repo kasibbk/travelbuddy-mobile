@@ -1,9 +1,10 @@
-import { createContext, PropsWithChildren, useContext, useEffect, useState } from "react";
+import { createContext, PropsWithChildren, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { getAuthRedirectUrl } from "../lib/auth-links";
 import { clearStore } from "../lib/local-store";
 import { unregisterPushTokens } from "../lib/notifications";
+import { resumeLiveLocationTracking, stopLiveLocationTracking, stopLocalLiveLocationTask } from "../services/location/live-tracking";
 
 type AuthResult = { error: string | null; reactivated?: boolean };
 type SignUpResult = AuthResult & { hasSession: boolean };
@@ -23,19 +24,39 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const previousUserId = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    let resumedUserId: string | null = null;
+    function resumeLocationForUser(userId: string) {
+      if (resumedUserId === userId) return;
+      resumedUserId = userId;
+      void resumeLiveLocationTracking(userId)
+        .catch((error: unknown) => console.warn("[location] Could not resume background tracking", error));
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (mounted) {
         setSession(nextSession);
         setReady(true);
+      }
+      if (nextSession?.user.id) {
+        previousUserId.current = nextSession.user.id;
+        if (event === "INITIAL_SESSION" || event === "SIGNED_IN") resumeLocationForUser(nextSession.user.id);
+      } else if (event === "SIGNED_OUT") {
+        previousUserId.current = null;
+        resumedUserId = null;
+        void stopLocalLiveLocationTask()
+          .catch((error: unknown) => console.warn("[location] Could not stop background tracking after sign-out", error));
       }
     });
 
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) {
         setSession(data.session);
+        previousUserId.current = data.session?.user.id ?? null;
+        if (data.session?.user.id) resumeLocationForUser(data.session.user.id);
         setReady(true);
       }
     }).catch(() => {
@@ -49,13 +70,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, []);
 
   async function signIn(email: string, password: string): Promise<AuthResult> {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
     const { data: reactivated, error: reactivationError } = await supabase.rpc("reactivate_account");
     if (reactivationError) {
       await supabase.auth.signOut({ scope: "local" });
       await clearStore();
       return { error: `Could not verify account status: ${reactivationError.message}` };
+    }
+    if (data.session?.user.id) {
+      try {
+        await resumeLiveLocationTracking(data.session.user.id);
+      } catch (locationError) {
+        console.warn("[location] Could not resume tracking after sign-in", locationError);
+      }
     }
     return { error: null, reactivated: Boolean(reactivated) };
   }
@@ -75,6 +103,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   async function signOut(): Promise<AuthResult> {
     if (session?.user.id) {
+      try {
+        await stopLiveLocationTracking(session.user.id);
+      } catch (error) {
+        console.warn("[location] Could not clear live location before sign-out", error);
+      }
       try {
         await unregisterPushTokens(session.user.id);
       } catch (error) {
