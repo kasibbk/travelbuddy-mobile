@@ -29,6 +29,7 @@ type UnifiedMapViewProps = {
   cameraTarget?: AppCoords | null;
   selectedLocation?: AppCoords | null;
   onLocationSelect?: (location: AppCoords) => void;
+  onMapPress?: () => void;
 };
 
 function routeBounds(points: AppCoords[]) {
@@ -59,7 +60,7 @@ function centerCoords(userLocation: AppCoords | null, destinationLocation: AppCo
   return userLocation ?? destinationLocation;
 }
 
-export function UnifiedMapView({ userLocation, destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", destinationTitle = "Destination", cameraTarget, onLocationSelect }: UnifiedMapViewProps) {
+export function UnifiedMapView({ userLocation, destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", destinationTitle = "Destination", cameraTarget, onLocationSelect, onMapPress }: UnifiedMapViewProps) {
   const setPageScrollLocked = useContext(PageScrollLockContext);
   useEffect(() => () => setPageScrollLocked?.(false), [setPageScrollLocked]);
   const center = selectionMode ? cameraTarget ?? userLocation : centerCoords(userLocation, destinationLocation) ?? friendMarkers[0]?.location ?? null;
@@ -131,7 +132,7 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
             animated: false,
           });
         }
-      }} onPress={selectionMode ? (event) => onLocationSelect?.({ lat: event.nativeEvent.coordinate.latitude, lng: event.nativeEvent.coordinate.longitude }) : undefined}>
+      }} onPress={selectionMode ? (event) => onLocationSelect?.({ lat: event.nativeEvent.coordinate.latitude, lng: event.nativeEvent.coordinate.longitude }) : onMapPress ? () => onMapPress() : undefined}>
         {userLocation && <Marker coordinate={{ latitude: userLocation.lat, longitude: userLocation.lng }} title={userLocationTitle} />}
         {destinationLocation && <Marker coordinate={{ latitude: destinationLocation.lat, longitude: destinationLocation.lng }} title={destinationTitle} />}
         {routePoints.length >= 2 && <Polyline coordinates={routePoints.map(({ lat, lng }) => ({ latitude: lat, longitude: lng }))} strokeColor="#214E3D" strokeWidth={4} />}
@@ -140,7 +141,7 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
       : <MapLibreMap key={`open-${mapKey}`} mapStyle={OPENFREEMAP_STYLE} style={StyleSheet.absoluteFill} pointerEvents={readOnly ? "none" : "auto"} onPress={selectionMode ? (event) => {
         const [lng, lat] = event.nativeEvent.lngLat;
         onLocationSelect?.({ lat, lng });
-      } : undefined}>
+      } : onMapPress ? () => onMapPress() : undefined}>
         <Camera initialViewState={routeViewport ? { bounds: routeViewport.bounds, padding: { top: 28, right: 28, bottom: 28, left: 28 } } : { center: center ? [center.lng, center.lat] : [0, 20], zoom: center ? 10 : 2 }} />
         <GeoJSONSource id="route-source" data={routeData}>
           <Layer id="route-line" type="line" source="route-source" layout={{ "line-cap": "round", "line-join": "round" }} paint={{ "line-color": "#214E3D", "line-width": 4 }} />

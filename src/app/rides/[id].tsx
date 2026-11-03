@@ -322,7 +322,7 @@ export default function RideDetailsScreen() {
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Distance</Text><Text style={styles.detailValue}>{calculatedDistance ?? (currentRoutePreview?.status === "error" ? ride.distance : "Calculating route…")}</Text></View>
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Estimated time</Text><Text style={styles.detailValue}>{calculatedDuration ?? (currentRoutePreview?.status === "error" ? ride.duration : "Calculating route…")}</Text></View>
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Rider limit</Text><Text style={styles.detailValue}>{ride.capacity}</Text></View>
-          <Text style={styles.routeMapTitle}>Route map</Text>
+          <Text style={styles.routeMapTitle}>Route map · tap for full screen</Text>
           {currentRoutePreview?.status === "ready"
             ? <UnifiedMapView
               userLocation={currentRoutePreview.start}
@@ -331,6 +331,7 @@ export default function RideDetailsScreen() {
               fitToMarkers
               userLocationTitle="Starting point"
               destinationTitle="Destination"
+              onMapPress={() => router.push({ pathname: "/rides/[id]/map", params: { id: ride.id } })}
               style={styles.routeMap}
             />
             : currentRoutePreview?.status === "error"

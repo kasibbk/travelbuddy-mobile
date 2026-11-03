@@ -162,7 +162,7 @@ export default function MyRidesScreen() {
         </View>;
       })}
     </View> : <EmptyState icon={ShieldCheck} title="No rides to manage" description="Upcoming rides you created will appear here for co-admin assignment." /> : visibleRides.length ? <View style={styles.rideList}>
-      {visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} />)}
+      {visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} onViewMap={() => router.push({ pathname: "/rides/[id]/map", params: { id: ride.id } })} />)}
     </View> : <EmptyState icon={CalendarDays} title={tab === "Past" ? "No past rides yet" : "No upcoming rides yet"} description="Rides you create, administer, or are approved to join will appear here." />}
 
     <AssignRideAdminModal visible={!!selectedAdminRide} ride={selectedAdminRide} friends={friends} admins={selectedAdminRide ? rideAdmins[selectedAdminRide.id] ?? [] : []} assignedBy={userId ?? ""} onClose={() => setAdminRideId("")} onAssigned={(friend) => selectedAdminRide && addAssignedFriend(selectedAdminRide.id, friend)} />

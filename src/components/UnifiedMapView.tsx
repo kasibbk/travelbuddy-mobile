@@ -17,9 +17,10 @@ type UnifiedMapViewProps = {
   cameraTarget?: AppCoords | null;
   selectedLocation?: AppCoords | null;
   onLocationSelect?: (location: AppCoords) => void;
+  onMapPress?: () => void;
 };
 
-export function UnifiedMapView({ userLocation, destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", selectedLocation, onLocationSelect }: UnifiedMapViewProps) {
+export function UnifiedMapView({ userLocation, destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", selectedLocation, onLocationSelect, onMapPress }: UnifiedMapViewProps) {
   const mapUrl = USE_GOOGLE_MAPS
     ? "https://maps.google.com"
     : "https://www.openstreetmap.org/fixthemap";
@@ -34,6 +35,7 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
         ? `${showUserLocationTitle && userLocation ? `${userLocationTitle}: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}\n` : ""}${friendMarkers.length ? `${friendMarkers.length} friend${friendMarkers.length === 1 ? "" : "s"} sharing live location\n${friendMarkers.map((friend) => friend.title).join(", ")}` : "No friends sharing live location"}`
         : `Start: ${userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : "not set"}\nDestination: ${destinationLocation ? `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}` : "not set"}\nRoute points: ${routePoints.length}`}
     </Text>
+    {onMapPress && <Pressable accessibilityRole="button" onPress={onMapPress}><Text style={styles.link}>Open full-screen map</Text></Pressable>}
     {selectionMode && <View style={styles.webPicker}>
       <Text style={styles.webPickerText}>Map pin selection is available in the mobile app.</Text>
       <Pressable accessibilityRole="button" disabled={!userLocation} onPress={() => userLocation && onLocationSelect?.(userLocation)} style={[styles.webButton, !userLocation && styles.disabled]}>

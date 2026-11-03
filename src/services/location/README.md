@@ -4,7 +4,7 @@
 
 Ride start and destination locations are selected on the map. The selected coordinates are reverse-geocoded into the ride's existing location label; the ride data model remains label-based. Nominatim reverse-geocoding requests are made only when the user confirms a pin.
 
-Ride details geocode the saved start/destination labels, calculate a motor-vehicle route, distance in kilometers, and estimated travel time through the selected provider, and show a non-interactive map preview fitted to the full route. Route previews are calculated when details are opened and are not persisted.
+Ride details geocode the saved start/destination labels, calculate a motor-vehicle route, distance in kilometers, estimated travel time, and turn-by-turn steps through the selected provider. Tapping the route preview or a ride-card map icon opens the fitted full-screen route map; its directions button opens the step list. Route previews are calculated when opened and are not persisted.
 
 The map picker and profile home-location field provide explicit location searches with selectable results. Searches are submitted by the user and are not autocomplete requests.
 
