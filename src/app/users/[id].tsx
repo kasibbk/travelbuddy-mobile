@@ -9,6 +9,7 @@ import { EmptyState } from "../../components/empty-state";
 import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { colors } from "../../components/theme";
 import { blockUser, createDirectConversation, createFriendRequest, FriendData, getImagePublicUrl, loadBlockedUsers, loadFriendRequests, loadPublicProfile, PublicProfileData, unblockUser } from "../../lib/app-data";
+import { loadLiveFriendLocations } from "../../services/location/live-tracking";
 
 export default function PublicUserProfileScreen() {
   const router = useRouter();
@@ -16,6 +17,7 @@ export default function PublicUserProfileScreen() {
   const { ready, userId } = useAuth();
   const [profile, setProfile] = useState<PublicProfileData | null>(null);
   const [friendship, setFriendship] = useState<FriendData | null>(null);
+  const [friendLocationAccess, setFriendLocationAccess] = useState<{ viewerId: string; friendId: string; available: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,9 +36,24 @@ export default function PublicUserProfileScreen() {
     Promise.all([loadPublicProfile(id, userId), loadFriendRequests(userId), loadBlockedUsers()])
       .then(([row, friendships, blockedUsers]) => {
         if (!active) return;
+        const currentFriendship = friendships.find((item) => item.otherUserId === id) ?? null;
         setProfile(row);
-        setFriendship(friendships.find((item) => item.otherUserId === id) ?? null);
+        setFriendship(currentFriendship);
         setIsBlocked(blockedUsers.some((blocked) => blocked.id === id));
+        if (currentFriendship?.status === "accepted") {
+          void loadLiveFriendLocations(userId)
+            .then((locations) => {
+              if (!active) return;
+              setFriendLocationAccess({ viewerId: userId, friendId: id, available: locations.some((location) => location.userId === id) });
+            })
+            .catch((cause: unknown) => {
+              if (!active) return;
+              setFriendLocationAccess({ viewerId: userId, friendId: id, available: false });
+              console.warn("[profile] Could not check friend location sharing", cause);
+            });
+        } else {
+          setFriendLocationAccess({ viewerId: userId, friendId: id, available: false });
+        }
       })
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load this profile."); })
       .finally(() => { if (active) setLoading(false); });
@@ -49,9 +66,16 @@ export default function PublicUserProfileScreen() {
     setError("");
     try {
       const [row, friendships, blockedUsers] = await Promise.all([loadPublicProfile(id, userId, true), loadFriendRequests(userId, true), loadBlockedUsers()]);
+      const currentFriendship = friendships.find((item) => item.otherUserId === id) ?? null;
       setProfile(row);
-      setFriendship(friendships.find((item) => item.otherUserId === id) ?? null);
+      setFriendship(currentFriendship);
       setIsBlocked(blockedUsers.some((blocked) => blocked.id === id));
+      if (currentFriendship?.status === "accepted") {
+        const locations = await loadLiveFriendLocations(userId);
+        setFriendLocationAccess({ viewerId: userId, friendId: id, available: locations.some((location) => location.userId === id) });
+      } else {
+        setFriendLocationAccess({ viewerId: userId, friendId: id, available: false });
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not refresh this profile.");
     } finally {
@@ -114,6 +138,12 @@ export default function PublicUserProfileScreen() {
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() ?? "";
   const profilePictureUrl = getImagePublicUrl("profile-images", profile?.avatarPath ?? null);
   const pace = profile?.ridingPace ? profile.ridingPace[0].toUpperCase() + profile.ridingPace.slice(1) : "Not shared";
+  const profileFriendId = typeof id === "string" ? id : null;
+  const canShowOnMap = friendship?.status === "accepted"
+    && profileFriendId !== null
+    && friendLocationAccess?.viewerId === userId
+    && friendLocationAccess.friendId === profileFriendId
+    && friendLocationAccess.available;
 
   return <View style={styles.screen}>
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Rider profile</Text></View>
@@ -126,6 +156,18 @@ export default function PublicUserProfileScreen() {
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
       {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       {friendship?.status === "accepted" ? <Pressable accessibilityRole="button" disabled={busy} onPress={openChat} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <><MessageCircle color={colors.surface} size={15} /><Text style={styles.buttonText}>Message</Text></>}</Pressable> : friendship?.status === "pending" ? <View style={styles.state}><Text style={styles.stateText}>{friendship.direction === "outgoing" ? "Friend request sent" : "Respond to this request in Friends"}</Text></View> : <Pressable accessibilityRole="button" disabled={busy} onPress={sendFriendRequest} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <><UserPlus color={colors.surface} size={15} /><Text style={styles.buttonText}>Add friend</Text></>}</Pressable>}
+      {canShowOnMap && <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Show ${profile.displayName} on map`}
+        onPress={() => {
+          if (!profileFriendId) return;
+          router.push({ pathname: "/friends-map", params: { friendId: profileFriendId } });
+        }}
+        style={styles.mapButton}
+      >
+        <MapPin color={colors.forest} size={15} />
+        <Text style={styles.mapButtonText}>Show on map</Text>
+      </Pressable>}
       <Pressable accessibilityRole="button" disabled={busy} onPress={() => void toggleBlock()} style={styles.blockButton}><Ban color="#A25743" size={14} /><Text style={styles.blockText}>{isBlocked ? "Unblock user" : confirmingBlock ? "Tap again to confirm block" : "Block user"}</Text></Pressable>
     </ScrollView> : <EmptyState icon={Users} title="Profile unavailable" description="This rider hasn’t shared a public profile, or the account no longer exists." />}
     <ImagePreviewModal imageUrl={profilePictureUrl} visible={picturePreviewOpen} label={profile?.displayName ?? "Profile"} onClose={() => setPicturePreviewOpen(false)} />
@@ -147,6 +189,8 @@ const styles = StyleSheet.create({
   paceText: { color: colors.forest, fontSize: 8, fontWeight: "700" },
   primaryButton: { minHeight: 42, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7, backgroundColor: colors.forest },
   buttonText: { color: colors.surface, fontSize: 10, fontWeight: "700" },
+  mapButton: { minHeight: 42, marginTop: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 8, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7, backgroundColor: colors.surface },
+  mapButtonText: { color: colors.forest, fontSize: 10, fontWeight: "700" },
   blockButton: { minHeight: 40, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   blockText: { color: "#A25743", fontSize: 9, fontWeight: "700" },
   state: { minHeight: 42, marginTop: 12, alignItems: "center", justifyContent: "center" },

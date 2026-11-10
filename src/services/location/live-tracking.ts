@@ -7,6 +7,8 @@ import type { AppCoords } from "./types";
 
 const LIVE_LOCATION_TASK = "travelbuddy-live-location";
 const LEGACY_SHARING_KEY_PREFIX = "live-location-sharing:";
+const LIVE_LOCATION_INTERVAL_MS = 30_000;
+const LIVE_LOCATION_STALE_AFTER_MS = LIVE_LOCATION_INTERVAL_MS * 3;
 let locationStartPromise: Promise<boolean> | null = null;
 
 type LiveLocationTaskData = {
@@ -119,7 +121,7 @@ async function startLocationTrackingOnce(userId: string, requestPermissions: boo
 
     await Location.startLocationUpdatesAsync(LIVE_LOCATION_TASK, {
       accuracy: Location.Accuracy.Balanced,
-      timeInterval: 30_000,
+      timeInterval: LIVE_LOCATION_INTERVAL_MS,
       distanceInterval: 50,
       pausesUpdatesAutomatically: false,
       showsBackgroundLocationIndicator: true,
@@ -241,8 +243,28 @@ export async function ensureLiveLocationTracking(userId: string): Promise<void> 
 }
 
 export async function resumeLiveLocationTracking(userId: string): Promise<void> {
-  if (Platform.OS !== "web") await migrateLegacySharingPreference(userId);
-  await startLocationTracking(userId, false);
+  if (Platform.OS === "web") return;
+  await migrateLegacySharingPreference(userId);
+  const preferences = await loadLocationPreferences(userId);
+  if (!preferences.discoverable && !preferences.sharingEnabled) {
+    await reconcileLiveLocationTracking(userId);
+    return;
+  }
+
+  if (await Location.hasStartedLocationUpdatesAsync(LIVE_LOCATION_TASK)) {
+    const { data, error } = await supabase.from("live_locations")
+      .select("updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw error;
+    const lastUpdate = data ? Date.parse(data.updated_at) : Number.NaN;
+    if (!Number.isFinite(lastUpdate) || Date.now() - lastUpdate > LIVE_LOCATION_STALE_AFTER_MS) {
+      await stopLocationTaskIfRunning();
+    }
+  }
+
+  const resumed = await startLocationTracking(userId, false);
+  if (!resumed) console.warn("[location] Tracking is enabled but background location permissions or device services are unavailable.");
 }
 
 export async function reconcileLiveLocationTracking(userId: string): Promise<void> {
@@ -295,6 +317,25 @@ export async function loadLiveFriendLocations(userId: string): Promise<LiveFrien
       updatedAt: location.updated_at,
     }];
   });
+}
+
+export async function loadLiveRideMemberLocations(rideId: string): Promise<LiveFriendLocationData[]> {
+  const { data, error } = await supabase.rpc("ride_member_live_locations", { p_ride_id: rideId });
+  if (error) throw error;
+  return ((data ?? []) as {
+    user_id: string;
+    display_name: string;
+    avatar_path: string | null;
+    latitude: number;
+    longitude: number;
+    updated_at: string;
+  }[]).map((location) => ({
+    userId: location.user_id,
+    name: location.display_name,
+    avatarPath: location.avatar_path,
+    location: { lat: location.latitude, lng: location.longitude },
+    updatedAt: location.updated_at,
+  }));
 }
 
 export async function loadOwnLiveLocation(userId: string): Promise<AppCoords | null> {

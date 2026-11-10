@@ -1,5 +1,6 @@
 import { createContext, PropsWithChildren, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { AppState } from "react-native";
 import { supabase } from "../lib/supabase";
 import { getAuthRedirectUrl } from "../lib/auth-links";
 import { clearStore } from "../lib/local-store";
@@ -29,12 +30,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     let mounted = true;
     let resumedUserId: string | null = null;
-    function resumeLocationForUser(userId: string) {
-      if (resumedUserId === userId) return;
+    function resumeLocationForUser(userId: string, force = false) {
+      if (!force && resumedUserId === userId) return;
       resumedUserId = userId;
       void resumeLiveLocationTracking(userId)
         .catch((error: unknown) => console.warn("[location] Could not resume background tracking", error));
     }
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      void supabase.auth.getSession()
+        .then(({ data, error }) => {
+          if (error) throw error;
+          if (mounted && data.session?.user.id) resumeLocationForUser(data.session.user.id, true);
+        })
+        .catch((error: unknown) => console.warn("[location] Could not reconcile tracking after app resume", error));
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (mounted) {
@@ -66,6 +77,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      appStateSubscription.remove();
     };
   }, []);
 

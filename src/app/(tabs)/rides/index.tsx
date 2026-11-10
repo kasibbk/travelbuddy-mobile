@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { CalendarDays, Check, ShieldCheck, UserPlus, X } from "lucide-react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
@@ -10,7 +10,6 @@ import { PageShell } from "../../../components/page-shell";
 import { RideCard } from "../../../components/ride-card";
 import { colors } from "../../../components/theme";
 import { useAuth } from "../../../components/auth-provider";
-import { useStoreVersion } from "../../../lib/store-events";
 import {
   AdminRequestData,
   FriendData,
@@ -26,7 +25,7 @@ import {
 
 export default function MyRidesScreen() {
   const router = useRouter();
-  const [tab, setTab] = useState("Upcoming");
+  const [tab, setTab] = useState("Active");
   const { ready, userId } = useAuth();
   const [rides, setRides] = useState<RideCardData[]>([]);
   const [requests, setRequests] = useState<AdminRequestData[]>([]);
@@ -38,7 +37,19 @@ export default function MyRidesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<{ requestId: string; decision: "approved" | "declined" } | null>(null);
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
-  const storeVersion = useStoreVersion();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      setRides((current) => current.map((ride) => ride.status === "open"
+        && new Date(ride.startsAt).getTime() + 24 * 60 * 60 * 1000 <= currentTime
+        ? { ...ride, status: "expired" }
+        : ride));
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -65,13 +76,14 @@ export default function MyRidesScreen() {
       .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load your rides."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId, storeVersion]));
+  }, [ready, userId]));
 
-  const now = Date.now();
-  const upcoming = useMemo(() => rides.filter((ride) => ride.status === "open" && new Date(ride.startsAt).getTime() >= now), [rides, now]);
-  const past = useMemo(() => rides.filter((ride) => ride.status !== "open" || new Date(ride.startsAt).getTime() < now), [rides, now]);
-  const visibleRides = tab === "Past" ? past : upcoming;
-  const ownedUpcomingRides = upcoming.filter((ride) => ride.creatorId === userId);
+  const activeRides = useMemo(() => rides.filter((ride) => ride.status === "started"
+    || (ride.status === "open" && new Date(ride.startsAt).getTime() + 24 * 60 * 60 * 1000 > now)), [rides, now]);
+  const past = useMemo(() => rides.filter((ride) => ride.status !== "started"
+    && (ride.status !== "open" || new Date(ride.startsAt).getTime() + 24 * 60 * 60 * 1000 <= now)), [rides, now]);
+  const visibleRides = tab === "Past" ? past : activeRides;
+  const ownedUpcomingRides = activeRides.filter((ride) => ride.creatorId === userId && ride.status === "open" && new Date(ride.startsAt).getTime() >= now);
   const selectedAdminRide = rides.find((ride) => ride.id === adminRideId) ?? null;
 
   function addAssignedFriend(rideId: string, friend: FriendData) {
@@ -118,14 +130,14 @@ export default function MyRidesScreen() {
   return <PageShell refreshing={refreshing} onRefresh={refreshData}>
     <AppHeader eyebrow="YOUR ROUTES, YOUR CREW" title="My rides" subtitle="Everything you’re planning or taking the lead on." />
     <View style={styles.stats}>
-      <Stat value={String(upcoming.length).padStart(2, "0")} label="UPCOMING" />
+      <Stat value={String(activeRides.length).padStart(2, "0")} label="ACTIVE" />
       <View style={styles.statDivider} />
       <Stat value={String(requests.length).padStart(2, "0")} label="TO REVIEW" />
       <View style={styles.statDivider} />
-      <Stat value={String(past.length).padStart(2, "0")} label="COMPLETED" />
+      <Stat value={String(past.length).padStart(2, "0")} label="ENDED" />
     </View>
     <View style={styles.tabs}>
-      {["Upcoming", "Requests", "Past", "Admins"].map((item) => <Pressable key={item} style={[styles.tab, tab === item && styles.activeTab]} onPress={() => setTab(item)}>
+      {["Active", "Requests", "Past", "Admins"].map((item) => <Pressable key={item} style={[styles.tab, tab === item && styles.activeTab]} onPress={() => setTab(item)}>
         <Text style={[styles.tabText, tab === item && styles.activeTabText]}>{item}{item === "Requests" && requests.length ? ` · ${requests.length}` : ""}</Text>
       </Pressable>)}
     </View>
@@ -163,7 +175,7 @@ export default function MyRidesScreen() {
       })}
     </View> : <EmptyState icon={ShieldCheck} title="No rides to manage" description="Upcoming rides you created will appear here for co-admin assignment." /> : visibleRides.length ? <View style={styles.rideList}>
       {visibleRides.map((ride) => <RideCard key={ride.id} ride={ride} onViewDetails={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} onViewMap={() => router.push({ pathname: "/rides/[id]/map", params: { id: ride.id } })} />)}
-    </View> : <EmptyState icon={CalendarDays} title={tab === "Past" ? "No past rides yet" : "No upcoming rides yet"} description="Rides you create, administer, or are approved to join will appear here." />}
+    </View> : <EmptyState icon={CalendarDays} title={tab === "Past" ? "No past rides yet" : "No active rides yet"} description="Rides you create, administer, or are approved to join will appear here." />}
 
     <AssignRideAdminModal visible={!!selectedAdminRide} ride={selectedAdminRide} friends={friends} admins={selectedAdminRide ? rideAdmins[selectedAdminRide.id] ?? [] : []} assignedBy={userId ?? ""} onClose={() => setAdminRideId("")} onAssigned={(friend) => selectedAdminRide && addAssignedFriend(selectedAdminRide.id, friend)} />
   </PageShell>;

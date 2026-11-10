@@ -36,6 +36,7 @@ export function RideCard({ ride, requestState, viewerIsOwner = false, actionPend
         </View>
         <View style={styles.body}>
           <View style={styles.dateLine}><CalendarDays color={colors.leaf} size={13} /><Text style={styles.dateText}>{ride.date} · {ride.time}</Text></View>
+          {ride.status !== "open" && <Text style={styles.statusText}>{ride.status === "started" ? "IN PROGRESS" : ride.status.toUpperCase()}</Text>}
           <Text style={styles.title}>{ride.title}</Text>
           <View style={styles.routeLine}><MapPin color={colors.orange} size={13} /><Text numberOfLines={1} style={styles.routeText}>{ride.route}</Text></View>
           <View style={styles.footer}>
@@ -59,12 +60,13 @@ const styles = StyleSheet.create({
   bannerShade: { backgroundColor: "#13251F66" },
   mapIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   metrics: { alignItems: "flex-end", gap: 6 },
-  distanceText: { color: colors.muted, fontSize: 9, fontWeight: "700" },
-  durationLine: { flexDirection: "row", alignItems: "center", gap: 4 },
+  distanceText: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 11, backgroundColor: colors.surface, color: colors.muted, fontSize: 9, fontWeight: "700" },
+  durationLine: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 11, backgroundColor: colors.surface },
   durationText: { color: colors.forest, fontSize: 9, fontWeight: "700" },
   body: { paddingHorizontal: 13, paddingTop: 11, paddingBottom: 12 },
   dateLine: { flexDirection: "row", alignItems: "center", gap: 6 },
   dateText: { color: colors.muted, fontSize: 9, fontWeight: "600" },
+  statusText: { marginTop: 6, color: colors.leaf, fontSize: 8, fontWeight: "800", letterSpacing: 0.6 },
   title: { marginTop: 7, color: colors.ink, fontFamily: "Georgia", fontSize: 19, fontWeight: "500" },
   routeLine: { marginTop: 6, flexDirection: "row", alignItems: "center", gap: 5 },
   routeText: { flexShrink: 1, color: colors.muted, fontSize: 9 },
