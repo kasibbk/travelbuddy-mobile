@@ -8,10 +8,17 @@ export type LocationSearchResult = {
   coords: AppCoords;
 };
 
+export type RouteDirection = {
+  instruction: string;
+  distanceMeters: number;
+  durationSeconds: number;
+};
+
 export type RouteResult = {
   distanceKilometers: number;
   estimatedDurationMinutes: number;
   points: AppCoords[];
+  directions: RouteDirection[];
 };
 
 export interface RoutingService {

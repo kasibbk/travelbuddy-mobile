@@ -3,6 +3,7 @@ import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors } from "../components/theme";
 import { supabase } from "../lib/supabase";
+import { stopLiveLocationTracking } from "../services/location/live-tracking";
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
@@ -54,6 +55,9 @@ export default function ResetPasswordScreen() {
     try {
       const { error: updateError } = await supabase.auth.updateUser({ password });
       if (updateError) throw updateError;
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (session) await stopLiveLocationTracking(session.user.id);
       const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
       if (signOutError) throw signOutError;
       setValidLink(false);

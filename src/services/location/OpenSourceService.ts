@@ -7,9 +7,28 @@ const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 let nextRoutingRequestAt = 0;
 let nextGeocodingRequestAt = 0;
 
+type OsrmRouteStep = {
+  distance: number;
+  duration: number;
+  name?: string;
+  ref?: string;
+  destinations?: string;
+  maneuver: {
+    type: string;
+    modifier?: string;
+    exit?: number;
+    bearing_after?: number;
+  };
+};
+
 type OsrmRouteResponse = {
   code: string;
-  routes?: { distance: number; duration: number; geometry: { coordinates: [number, number][] } }[];
+  routes?: {
+    distance: number;
+    duration: number;
+    geometry: { coordinates: [number, number][] };
+    legs?: { steps?: OsrmRouteStep[] }[];
+  }[];
 };
 
 type NominatimSearchResult = {
@@ -34,7 +53,7 @@ async function respectPublicServiceLimit(kind: "routing" | "geocoding"): Promise
 async function loadRoute(start: AppCoords, end: AppCoords): Promise<OsrmRouteResponse> {
   await respectPublicServiceLimit("routing");
   const coordinates = `${start.lng},${start.lat};${end.lng},${end.lat}`;
-  const response = await fetch(`${MOTOR_ROUTING_URL}/${coordinates}?overview=full&geometries=geojson&steps=false`);
+  const response = await fetch(`${MOTOR_ROUTING_URL}/${coordinates}?overview=full&geometries=geojson&steps=true`);
   if (!response.ok) throw new Error(`OpenStreetMap routing failed (${response.status}).`);
   const result = await response.json() as OsrmRouteResponse;
   if (result.code !== "Ok" || !result.routes?.[0]) {
@@ -47,6 +66,46 @@ function firstRoute(result: OsrmRouteResponse) {
   const route = result.routes?.[0];
   if (!route) throw new Error("No motor-vehicle route could be found between these locations.");
   return route;
+}
+
+function formatOsrmInstruction(step: OsrmRouteStep): string {
+  const { type, modifier, exit } = step.maneuver;
+  const road = step.name?.trim() || step.ref?.trim() || step.destinations?.trim();
+  const ontoRoad = road ? ` onto ${road}` : "";
+  const modifierText = modifier ? ` ${modifier}` : "";
+
+  switch (type) {
+    case "depart": {
+      const bearing = step.maneuver.bearing_after;
+      const direction = typeof bearing === "number"
+        ? ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][Math.round(bearing / 45) % 8]
+        : null;
+      return `Head${direction ? ` ${direction}` : ""}${road ? ` on ${road}` : ""}`;
+    }
+    case "arrive":
+      return "Arrive at your destination";
+    case "turn":
+    case "end of road":
+      return `${type === "end of road" ? "At the end of the road, turn" : "Turn"}${modifierText}${ontoRoad}`;
+    case "new name":
+    case "continue":
+      return `Continue${road ? ` on ${road}` : ""}`;
+    case "merge":
+      return `Merge${modifierText}${ontoRoad}`;
+    case "on ramp":
+      return `Take the ramp${modifierText}${ontoRoad}`;
+    case "off ramp":
+      return `Take the exit${modifierText}${ontoRoad}`;
+    case "fork":
+      return `Keep${modifierText || " straight"} at the fork${ontoRoad}`;
+    case "roundabout":
+    case "rotary":
+      return `${typeof exit === "number" ? `At the roundabout, take exit ${exit}` : "Enter the roundabout"}${ontoRoad}`;
+    case "roundabout turn":
+      return `At the roundabout, take the${modifierText} exit${ontoRoad}`;
+    default:
+      return `Continue${modifierText}${road ? ` on ${road}` : " straight"}`;
+  }
 }
 
 export class OpenSourceService implements RoutingService {
@@ -66,6 +125,11 @@ export class OpenSourceService implements RoutingService {
       distanceKilometers: route.distance / 1000,
       estimatedDurationMinutes: Math.ceil(route.duration / 60),
       points: route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng })),
+      directions: (route.legs ?? []).flatMap((leg) => (leg.steps ?? []).map((step) => ({
+        instruction: formatOsrmInstruction(step),
+        distanceMeters: step.distance,
+        durationSeconds: step.duration,
+      }))),
     };
   }
 

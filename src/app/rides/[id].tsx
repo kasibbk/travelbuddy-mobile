@@ -3,13 +3,13 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, CalendarDays, Check, MessageCircle, Pencil, ShieldCheck, Users, X } from "lucide-react-native";
 import { ActivityIndicator, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
-import { useStoreVersion } from "../../lib/store-events";
 import { formatRideDistance, formatRideDuration } from "../../lib/ride-format";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { CreateRideModal } from "../../components/create-ride-modal";
 import { UnifiedMapView } from "../../components/UnifiedMapView";
+import { PageScrollLockContext } from "../../components/page-shell";
 import { colors } from "../../components/theme";
 import { LocationService } from "../../services/location";
 import type { AppCoords } from "../../services/location/types";
@@ -20,6 +20,7 @@ import {
   ConversationData,
   createDirectConversation,
   createFriendRequest,
+  endRide,
   FriendData,
   getImagePublicUrl,
   leaveRide,
@@ -36,6 +37,7 @@ import {
   RideParticipantData,
   RideRequestData,
   saveRideRouteMetrics,
+  startRide,
 } from "../../lib/app-data";
 
 type RideTab = "Overview" | "Members" | "Requests";
@@ -60,14 +62,22 @@ export default function RideDetailsScreen() {
   const [canSeeMembers, setCanSeeMembers] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [mapInteracting, setMapInteracting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cancelDialog, setCancelDialog] = useState(false);
   const [leaveDialog, setLeaveDialog] = useState(false);
+  const [startDialog, setStartDialog] = useState(false);
+  const [endDialog, setEndDialog] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
   const [routePreview, setRoutePreview] = useState<RideRoutePreview | null>(null);
   const [bannerPreviewOpen, setBannerPreviewOpen] = useState(false);
-  const storeVersion = useStoreVersion();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId || !id || Array.isArray(id)) return;
@@ -108,7 +118,7 @@ export default function RideDetailsScreen() {
     }
     void load();
     return () => { active = false; };
-  }, [ready, userId, id, storeVersion]));
+  }, [ready, userId, id]));
 
   const routeLabel = ride?.route ?? "";
   const routeKey = ride
@@ -192,6 +202,37 @@ export default function RideDetailsScreen() {
       setCancelDialog(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not cancel this ride.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmStart() {
+    if (!userId || !ride || !(isOwner || isAdmin) || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await startRide(ride.id, userId);
+      setRide({ ...ride, status: "started" });
+      setRequests([]);
+      setStartDialog(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not start this ride.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmEnd() {
+    if (!userId || !ride || !(isOwner || isAdmin) || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await endRide(ride.id, userId);
+      setRide({ ...ride, status: "completed" });
+      setEndDialog(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not end this ride.");
     } finally {
       setBusy(false);
     }
@@ -304,13 +345,20 @@ export default function RideDetailsScreen() {
     ? formatRideDuration(currentRoutePreview.estimatedDurationMinutes)
     : null;
   const bannerUrl = getImagePublicUrl("ride-banners", ride?.bannerImagePath ?? null);
+  const rideStartTime = ride ? new Date(ride.startsAt).getTime() : Number.NaN;
+  const effectiveRideStatus = ride?.status === "open" && rideStartTime + 24 * 60 * 60 * 1000 <= now
+    ? "expired"
+    : ride?.status;
+  const canStartRide = !!ride && (isOwner || isAdmin) && effectiveRideStatus === "open"
+    && rideStartTime <= now && now < rideStartTime + 24 * 60 * 60 * 1000;
 
   return <View style={styles.screen}>
     <View style={styles.header}><Pressable accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable><Text style={styles.headerTitle}>Ride details</Text><View style={{ flex: 1 }} />{conversation && <Pressable accessibilityLabel="Open ride chat" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: conversation.id } })} style={styles.headerAction}><MessageCircle color={colors.forest} size={18} /></Pressable>}</View>
     <ImagePreviewModal imageUrl={bannerUrl} visible={bannerPreviewOpen} label={ride?.title ?? "Ride"} onClose={() => setBannerPreviewOpen(false)} />
     {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : error && !ride ? <EmptyState icon={CalendarDays} title="Ride unavailable" description={error} /> : ride ? <>
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
-        <View style={styles.hero}>{bannerUrl && <Pressable accessibilityRole="button" accessibilityLabel={`View ${ride.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={styles.bannerPressable}><Image source={{ uri: bannerUrl }} style={styles.banner} /></Pressable>}<Text style={styles.status}>{ride.status === "cancelled" ? "CANCELLED" : ride.status === "completed" ? "COMPLETED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
+      <PageScrollLockContext.Provider value={setMapInteracting}>
+        <ScrollView scrollEnabled={!mapInteracting} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDetails} tintColor={colors.leaf} colors={[colors.leaf]} />} contentContainerStyle={styles.content}>
+        <View style={styles.hero}>{bannerUrl && <Pressable accessibilityRole="button" accessibilityLabel={`View ${ride.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={styles.bannerPressable}><Image source={{ uri: bannerUrl }} style={styles.banner} /></Pressable>}<Text style={styles.status}>{effectiveRideStatus === "started" ? "IN PROGRESS" : effectiveRideStatus === "cancelled" ? "CANCELLED" : effectiveRideStatus === "completed" ? "COMPLETED" : effectiveRideStatus === "expired" ? "EXPIRED" : "OPEN RIDE"}</Text><Text style={styles.title}>{ride.title}</Text><Text style={styles.route}>{ride.route}</Text><View style={styles.meta}><CalendarDays color={colors.leaf} size={15} /><Text style={styles.metaText}>{startDate}</Text></View></View>
         <View style={styles.tabs}>{tabs.map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, item === tab && styles.activeTab]}><Text style={[styles.tabText, item === tab && styles.activeTabText]}>{item}{item === "Requests" && requests.length ? ` · ${requests.length}` : ""}</Text></Pressable>)}</View>
 
         {tab === "Overview" ? <View style={styles.panel}>
@@ -319,25 +367,29 @@ export default function RideDetailsScreen() {
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Distance</Text><Text style={styles.detailValue}>{calculatedDistance ?? (currentRoutePreview?.status === "error" ? ride.distance : "Calculating route…")}</Text></View>
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Estimated time</Text><Text style={styles.detailValue}>{calculatedDuration ?? (currentRoutePreview?.status === "error" ? ride.duration : "Calculating route…")}</Text></View>
           <View style={styles.detailRow}><Text style={styles.detailLabel}>Rider limit</Text><Text style={styles.detailValue}>{ride.capacity}</Text></View>
-          <Text style={styles.routeMapTitle}>Route map</Text>
+          <Text style={styles.routeMapTitle}>{effectiveRideStatus === "started" ? "Live rider map · tap for full screen" : "Route map · tap for full screen"}</Text>
           {currentRoutePreview?.status === "ready"
             ? <UnifiedMapView
               userLocation={currentRoutePreview.start}
               destinationLocation={currentRoutePreview.destination}
               routePoints={currentRoutePreview.points}
-              readOnly
+              fitToMarkers
               userLocationTitle="Starting point"
               destinationTitle="Destination"
+              onMapPress={() => router.push({ pathname: "/rides/[id]/map", params: { id: ride.id } })}
               style={styles.routeMap}
             />
             : currentRoutePreview?.status === "error"
               ? <Text accessibilityRole="alert" style={styles.routeMapError}>Route preview unavailable: {currentRoutePreview.error}</Text>
               : <View style={styles.routeMapLoading}><ActivityIndicator size="small" color={colors.leaf} /><Text style={styles.routeMapLoadingText}>Calculating route…</Text></View>}
+          {effectiveRideStatus === "started" && canSeeMembers && <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/rides/[id]/map", params: { id: ride.id } })} style={styles.primaryButton}><Text style={styles.primaryText}>Open live rider map</Text></Pressable>}
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
-          {ride.status === "open" && isOwner && <Pressable accessibilityRole="button" onPress={() => setEditDialog(true)} style={[styles.secondaryButton, styles.editButton]}><Pencil color={colors.forest} size={14} /><Text style={styles.secondaryText}>Edit ride details</Text></Pressable>}
-          {ride.status === "open" && isOwner && <Pressable accessibilityRole="button" onPress={() => setCancelDialog(true)} style={styles.dangerButton}><X color="#9B493C" size={15} /><Text style={styles.dangerText}>Cancel ride for everyone</Text></Pressable>}
-          {ride.status === "open" && !isOwner && !isAdmin && requestState?.status === "approved" && <Pressable accessibilityRole="button" disabled={busy} onPress={() => setLeaveDialog(true)} style={styles.secondaryButton}><Text style={styles.secondaryText}>Leave ride</Text></Pressable>}
-          {ride.status === "open" && !isOwner && !isAdmin && requestState?.status !== "approved" && <Pressable accessibilityRole="button" disabled={busy} onPress={handleRequest} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable>}
+          {canStartRide && <Pressable accessibilityRole="button" disabled={busy} onPress={() => setStartDialog(true)} style={[styles.primaryButton, busy && styles.actionBusy]}><Text style={styles.primaryText}>Start ride</Text></Pressable>}
+          {(isOwner || isAdmin) && ride.status === "started" && <Pressable accessibilityRole="button" disabled={busy} onPress={() => setEndDialog(true)} style={[styles.dangerButton, busy && styles.actionBusy]}><Text style={styles.dangerText}>End ride</Text></Pressable>}
+          {effectiveRideStatus === "open" && rideStartTime > now && isOwner && <Pressable accessibilityRole="button" onPress={() => setEditDialog(true)} style={[styles.secondaryButton, styles.editButton]}><Pencil color={colors.forest} size={14} /><Text style={styles.secondaryText}>Edit ride details</Text></Pressable>}
+          {effectiveRideStatus === "open" && isOwner && <Pressable accessibilityRole="button" onPress={() => setCancelDialog(true)} style={styles.dangerButton}><X color="#9B493C" size={15} /><Text style={styles.dangerText}>Cancel ride for everyone</Text></Pressable>}
+          {effectiveRideStatus === "open" && !isOwner && !isAdmin && requestState?.status === "approved" && <Pressable accessibilityRole="button" disabled={busy} onPress={() => setLeaveDialog(true)} style={styles.secondaryButton}><Text style={styles.secondaryText}>Leave ride</Text></Pressable>}
+          {effectiveRideStatus === "open" && !isOwner && !isAdmin && requestState?.status !== "approved" && (rideStartTime > now || requestState?.status === "pending") && <Pressable accessibilityRole="button" disabled={busy} onPress={handleRequest} style={styles.primaryButton}>{busy ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.primaryText}>{requestState?.status === "pending" ? "Cancel request" : "Request a spot"}</Text>}</Pressable>}
           {conversation && <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: conversation.id } })} style={styles.chatButton}><MessageCircle color={colors.surface} size={15} /><Text style={styles.primaryText}>Go to ride chat</Text></Pressable>}
         </View> : tab === "Members" ? canSeeMembers ? participants.length ? <View style={styles.list}>{participants.map((person) => {
           const relationship = friendships.find((friend) => friend.otherUserId === person.userId);
@@ -347,18 +399,21 @@ export default function RideDetailsScreen() {
             {!isSelf && relationship?.status === "accepted" ? <Pressable accessibilityRole="button" accessibilityLabel={`Chat with ${person.displayName}`} disabled={busy} onPress={() => openFriendChat(person.userId, person.displayName)} style={[styles.smallAction, busy && styles.actionBusy]}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <><MessageCircle color={colors.forest} size={13} /><Text style={styles.smallActionText}>Chat</Text></>}</Pressable> : !isSelf && relationship?.status === "pending" ? <Text style={styles.friendState}>{relationship.direction === "outgoing" ? "Request sent" : "Respond in Friends"}</Text> : !isSelf ? <Pressable disabled={busy} onPress={() => addFriend(person.userId)} style={styles.smallAction}><Text style={styles.smallActionText}>Add friend</Text></Pressable> : null}
           </View>;
         })}</View> : <EmptyState icon={Users} title="No members yet" description="Ride owners and approved riders will appear here." /> : <EmptyState icon={ShieldCheck} title="Members are private" description="Request and get approved to see who’s riding." /> : requests.length ? <View style={styles.list}>{requests.map((request) => <View key={request.id} style={styles.personRow}><Avatar initials={request.riderName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", request.avatarPath)} size={38} /><View style={styles.personCopy}><Text style={styles.personName}>{request.riderName}</Text><Text style={styles.personRole}>{request.message || "Requested a spot"}</Text></View><Pressable accessibilityLabel={`Approve ${request.riderName}`} disabled={busy} onPress={() => review(request, "approved")} style={styles.approveAction}>{busy ? <ActivityIndicator size="small" color={colors.forest} /> : <Check color={colors.forest} size={17} />}</Pressable><Pressable accessibilityLabel={`Decline ${request.riderName}`} disabled={busy} onPress={() => review(request, "declined")} style={styles.declineAction}><X color="#9B493C" size={16} /></Pressable></View>)}</View> : <EmptyState icon={ShieldCheck} title="No requests yet" description="Pending join requests will appear in this tab." />}
-      </ScrollView>
+        </ScrollView>
+      </PageScrollLockContext.Provider>
     </> : null}
 
     {!!error && !!ride && <Text accessibilityRole="alert" style={styles.floatingError}>{error}</Text>}
     <CreateRideModal visible={editDialog} ride={ride ?? undefined} onClose={() => setEditDialog(false)} onOpen={() => setEditDialog(true)} onCreated={setRide} onUpdated={(updatedRide) => { setRide(updatedRide); setEditDialog(false); }} />
-    <ConfirmModal visible={cancelDialog} title="Cancel this ride?" message="The ride will be marked cancelled for everyone and move out of Upcoming." confirmText="Cancel ride" busy={busy} onClose={() => setCancelDialog(false)} onConfirm={confirmCancel} />
+    <ConfirmModal visible={cancelDialog} title="Cancel this ride?" message="The ride will be marked cancelled for everyone and move out of Active." confirmText="Cancel ride" busy={busy} onClose={() => setCancelDialog(false)} onConfirm={confirmCancel} />
     <ConfirmModal visible={leaveDialog} title="Leave this ride?" message="You’ll be removed from the ride and its chat." confirmText="Leave ride" busy={busy} onClose={() => setLeaveDialog(false)} onConfirm={confirmLeave} />
+    <ConfirmModal visible={startDialog} title="Start this ride?" message="Starting the ride makes live locations from sharing ride members visible to the whole ride and closes pending join requests." confirmText="Start ride" tone="primary" busy={busy} onClose={() => setStartDialog(false)} onConfirm={confirmStart} />
+    <ConfirmModal visible={endDialog} title="End this ride?" message="This ends the ride for everyone and stops its live rider map." confirmText="End ride" busy={busy} onClose={() => setEndDialog(false)} onConfirm={confirmEnd} />
   </View>;
 }
 
-function ConfirmModal({ visible, title, message, confirmText, busy, onClose, onConfirm }: { visible: boolean; title: string; message: string; confirmText: string; busy: boolean; onClose: () => void; onConfirm: () => void }) {
-  return <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.modalPanel}><Text style={styles.modalTitle}>{title}</Text><Text style={styles.modalMessage}>{message}</Text><View style={styles.modalActions}><Pressable disabled={busy} onPress={onClose} style={styles.modalCancel}><Text style={styles.modalCancelText}>Keep ride</Text></Pressable><Pressable disabled={busy} onPress={onConfirm} style={styles.modalConfirm}>{busy ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.modalConfirmText}>{confirmText}</Text>}</Pressable></View></View></View></Modal>;
+function ConfirmModal({ visible, title, message, confirmText, tone = "danger", busy, onClose, onConfirm }: { visible: boolean; title: string; message: string; confirmText: string; tone?: "primary" | "danger"; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  return <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.modalPanel}><Text style={styles.modalTitle}>{title}</Text><Text style={styles.modalMessage}>{message}</Text><View style={styles.modalActions}><Pressable disabled={busy} onPress={onClose} style={styles.modalCancel}><Text style={styles.modalCancelText}>Keep ride</Text></Pressable><Pressable disabled={busy} onPress={onConfirm} style={[styles.modalConfirm, tone === "primary" && styles.modalPrimary]}>{busy ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.modalConfirmText}>{confirmText}</Text>}</Pressable></View></View></View></Modal>;
 }
 
 const styles = StyleSheet.create({
@@ -371,5 +426,5 @@ const styles = StyleSheet.create({
   routeMapTitle: { marginTop: 12, marginBottom: 8, color: colors.ink, fontSize: 10, fontWeight: "800" }, routeMap: { height: 210, borderRadius: 9 }, routeMapLoading: { height: 170, alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 9, backgroundColor: "#E8EDDF" }, routeMapLoadingText: { color: colors.muted, fontSize: 9 }, routeMapError: { padding: 12, color: "#9B493C", fontSize: 9, lineHeight: 14, borderRadius: 9, backgroundColor: "#FBF1EB" },
   list: { marginHorizontal: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface }, personRow: { minHeight: 61, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8 }, personLink: { flex: 1, flexDirection: "row", alignItems: "center", gap: 9 }, personCopy: { flex: 1, gap: 3 }, personName: { color: colors.ink, fontSize: 10, fontWeight: "700" }, personRole: { color: colors.muted, fontSize: 8 }, friendState: { color: colors.leaf, fontSize: 8, fontWeight: "700" }, smallAction: { minHeight: 29, paddingHorizontal: 8, borderRadius: 7, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5, backgroundColor: colors.paleGreen }, smallActionText: { color: colors.forest, fontSize: 8, fontWeight: "700" }, actionBusy: { opacity: 0.65 }, approveAction: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen }, declineAction: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#FBF1EB" },
   primaryButton: { minHeight: 40, marginTop: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest }, primaryText: { color: colors.surface, fontSize: 9, fontWeight: "700" }, chatButton: { minHeight: 40, marginTop: 9, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: colors.forest }, secondaryButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 8, alignItems: "center", justifyContent: "center" }, editButton: { flexDirection: "row", gap: 7 }, secondaryText: { color: colors.forest, fontSize: 9, fontWeight: "700" }, dangerButton: { minHeight: 38, marginTop: 12, borderWidth: 1, borderColor: "#EBD6CF", borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#FBF1EB" }, dangerText: { color: "#9B493C", fontSize: 9, fontWeight: "700" }, error: { marginTop: 9, color: "#9B493C", fontSize: 8 }, floatingError: { marginHorizontal: 16, marginBottom: 6, color: "#9B493C", fontSize: 8 }, loader: { marginVertical: 26 },
-  modalBackdrop: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#13251F99" }, modalPanel: { padding: 17, borderRadius: 12, backgroundColor: colors.surface }, modalTitle: { color: colors.ink, fontFamily: "Georgia", fontSize: 20 }, modalMessage: { marginTop: 8, color: colors.muted, fontSize: 9, lineHeight: 14 }, modalActions: { marginTop: 16, flexDirection: "row", justifyContent: "flex-end", gap: 8 }, modalCancel: { minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 7, justifyContent: "center" }, modalCancelText: { color: colors.ink, fontSize: 9 }, modalConfirm: { minWidth: 86, minHeight: 36, paddingHorizontal: 12, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "#9B493C" }, modalConfirmText: { color: colors.surface, fontSize: 9, fontWeight: "700" },
+  modalBackdrop: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#13251F99" }, modalPanel: { padding: 17, borderRadius: 12, backgroundColor: colors.surface }, modalTitle: { color: colors.ink, fontFamily: "Georgia", fontSize: 20 }, modalMessage: { marginTop: 8, color: colors.muted, fontSize: 9, lineHeight: 14 }, modalActions: { marginTop: 16, flexDirection: "row", justifyContent: "flex-end", gap: 8 }, modalCancel: { minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 7, justifyContent: "center" }, modalCancelText: { color: colors.ink, fontSize: 9 }, modalConfirm: { minWidth: 86, minHeight: 36, paddingHorizontal: 12, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "#9B493C" }, modalPrimary: { backgroundColor: colors.forest }, modalConfirmText: { color: colors.surface, fontSize: 9, fontWeight: "700" },
 });

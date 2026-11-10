@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, MapPin, MessageCircle, Search, UserPlus, Users, X } from "lucide-react-native";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { AppHeader } from "../../../components/app-header";
 import { Avatar } from "../../../components/avatar";
@@ -10,6 +10,7 @@ import { colors } from "../../../components/theme";
 import { useAuth } from "../../../components/auth-provider";
 import { useStoreVersion } from "../../../lib/store-events";
 import { createDirectConversation, createFriendRequest, FriendData, getImagePublicUrl, loadFriendRequests, loadNearbyRiders, NearbyRiderData, PublicUserSearchData, respondToFriendRequest, searchPublicUsers } from "../../../lib/app-data";
+import { disableLiveLocationSharing, enableLiveLocationSharing, getLiveLocationSharingEnabled } from "../../../services/location/live-tracking";
 
 type FriendsTab = "Nearby" | "Search" | "Friends" | "Requests";
 
@@ -28,6 +29,11 @@ export default function FriendsScreen() {
   const [busyKey, setBusyKey] = useState("");
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [liveSharingEnabled, setLiveSharingEnabled] = useState(false);
+  const [liveSharingBusy, setLiveSharingBusy] = useState(false);
+  const [liveSharingError, setLiveSharingError] = useState("");
+  const liveSharingOperation = useRef(0);
+  const liveSharingBusyRef = useRef(false);
   const storeVersion = useStoreVersion();
 
   useFocusEffect(useCallback(() => {
@@ -35,6 +41,7 @@ export default function FriendsScreen() {
     if (!userId) {
       setNearby([]);
       setFriendRequests([]);
+      setLiveSharingEnabled(false);
       setLoading(false);
       return;
     }
@@ -51,6 +58,22 @@ export default function FriendsScreen() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [ready, userId, storeVersion]));
+
+  useFocusEffect(useCallback(() => {
+    if (!ready || !userId) return;
+    let active = true;
+    const operation = liveSharingOperation.current;
+    void getLiveLocationSharingEnabled(userId)
+      .then((enabled) => {
+        if (active && operation === liveSharingOperation.current) setLiveSharingEnabled(enabled);
+      })
+      .catch((cause: unknown) => {
+        if (active && operation === liveSharingOperation.current) {
+          setLiveSharingError(cause instanceof Error ? cause.message : "Could not load live-location sharing status.");
+        }
+      });
+    return () => { active = false; };
+  }, [ready, userId]));
 
   useEffect(() => {
     const normalizedQuery = query.trim();
@@ -125,6 +148,24 @@ export default function FriendsScreen() {
     }
   }
 
+  async function changeLiveLocationSharing(enabled: boolean) {
+    if (!userId || liveSharingBusyRef.current) return;
+    liveSharingBusyRef.current = true;
+    liveSharingOperation.current += 1;
+    setLiveSharingBusy(true);
+    setLiveSharingError("");
+    try {
+      if (enabled) await enableLiveLocationSharing(userId);
+      else await disableLiveLocationSharing(userId);
+      setLiveSharingEnabled(enabled);
+    } catch (cause) {
+      setLiveSharingError(cause instanceof Error ? cause.message : "Could not update live-location sharing.");
+    } finally {
+      liveSharingBusyRef.current = false;
+      setLiveSharingBusy(false);
+    }
+  }
+
   async function refreshData() {
     if (!userId || refreshing) return;
     setRefreshing(true);
@@ -145,6 +186,28 @@ export default function FriendsScreen() {
 
   return <PageShell refreshing={refreshing} onRefresh={refreshData}><AppHeader eyebrow="GOOD COMPANY TRAVELS" title="Find your people" subtitle="Meet nearby riders or search public profiles worldwide." />
     {tab === "Nearby" && <View style={styles.locationCard}><View style={styles.locationIcon}><MapPin color={colors.leaf} size={17} /></View><View style={styles.locationCopy}><Text style={styles.locationTitle}>Nearby riders</Text><Text style={styles.locationSubtitle}>Location-based results from riders who opted in.</Text></View></View>}
+    {tab === "Friends" && <View style={[styles.locationCard, styles.liveLocationCard]}>
+      <View style={styles.liveSharingRow}>
+        <View style={styles.locationIcon}><MapPin color={colors.leaf} size={17} /></View>
+        <View style={styles.locationCopy}>
+          <Text style={styles.locationTitle}>Share live location</Text>
+          <Text style={styles.locationSubtitle}>You and your accepted friends must turn this on to see each other on the map.</Text>
+        </View>
+        {liveSharingBusy ? <ActivityIndicator size="small" color={colors.leaf} /> : <Switch
+            accessibilityLabel="Share live location with accepted friends"
+            value={liveSharingEnabled}
+            disabled={!userId}
+            onValueChange={(enabled) => void changeLiveLocationSharing(enabled)}
+            trackColor={{ false: "#D6DDD3", true: colors.leaf }}
+            thumbColor={colors.surface}
+          />}
+      </View>
+      <Pressable accessibilityRole="button" onPress={() => router.push("/friends-map")} style={styles.mapButton}>
+        <MapPin color={colors.forest} size={14} />
+        <Text style={styles.mapButtonText}>View friends on map</Text>
+      </Pressable>
+      {!!liveSharingError && <Text accessibilityRole="alert" style={styles.liveSharingError}>{liveSharingError}</Text>}
+    </View>}
     <View style={styles.tabs}>{(["Nearby", "Search", "Friends", "Requests"] as const).map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabActive]}><Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text></Pressable>)}</View>
     <View style={styles.search}><Search color={colors.subtle} size={16} /><TextInput value={query} onChangeText={setQuery} maxLength={80} placeholder={tab === "Search" ? "Search public profiles worldwide" : tab === "Nearby" ? "Filter nearby riders" : "Search friends"} placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>
     <View style={styles.listHeader}><Text style={styles.eyebrow}>{tab === "Nearby" ? "RIDERS NEAR YOUR LOCATION" : tab === "Search" ? "PUBLIC PROFILES" : tab === "Friends" ? "ACCEPTED FRIENDS" : "PENDING FRIEND REQUESTS"}</Text><Text style={styles.count}>{tab === "Search" ? searchLoading ? "…" : searchResults.length : loading ? "…" : people.length}</Text></View>
@@ -180,13 +243,17 @@ export default function FriendsScreen() {
         <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/users/[id]", params: { id: isNearby ? person.id : person.otherUserId } })} style={styles.personInfo}><Text style={styles.personName}>{person.name}</Text><Text style={styles.personNote}>{detail}</Text>{!!actionErrors[actionKey] && <Text accessibilityRole="alert" style={styles.actionError}>{actionErrors[actionKey]}</Text>}</Pressable>
         {tab === "Nearby" && isNearby && (!relationship || relationship.status === "declined") ? <Pressable accessibilityLabel={`Send friend request to ${person.name}`} disabled={!!busyKey} onPress={() => sendRequest(person)} style={[styles.actionButton, styles.addButton, !!busyKey && styles.actionDisabled]}>{busyKey === person.id ? <ActivityIndicator size="small" color={colors.forest} /> : <UserPlus color={colors.forest} size={15} />}</Pressable> : tab === "Requests" && !isNearby && person.direction === "incoming" ? <View style={styles.actions}><Pressable accessibilityLabel={`Accept friend request from ${person.name}`} disabled={!!busyKey} onPress={() => answerRequest(person, true)} style={[styles.actionButton, styles.acceptButton, !!busyKey && styles.actionDisabled]}>{busyKey === person.id ? <ActivityIndicator size="small" color={colors.forest} /> : <Check color={colors.forest} size={16} />}</Pressable><Pressable accessibilityLabel={`Decline friend request from ${person.name}`} disabled={!!busyKey} onPress={() => answerRequest(person, false)} style={[styles.actionButton, styles.declineButton, !!busyKey && styles.actionDisabled]}><X color="#9B684F" size={15} /></Pressable></View> : tab === "Friends" && !isNearby ? <Pressable accessibilityLabel={`Message ${person.name}`} disabled={!!busyKey} onPress={() => openChat(person)} style={[styles.actionButton, styles.chatButton, !!busyKey && styles.actionDisabled]}>{busyKey === person.id ? <ActivityIndicator size="small" color={colors.forest} /> : <MessageCircle color={colors.forest} size={15} />}</Pressable> : <Text style={styles.statusText}>{status}</Text>}
       </View>;
-    })}</View> : <EmptyState icon={tab === "Nearby" ? MapPin : Users} title={tab === "Nearby" ? "No nearby riders yet" : tab === "Friends" ? "No friends yet" : "No pending requests"} description={tab === "Nearby" ? "Nearby suggestions appear for opted-in riders with a saved location in range." : tab === "Friends" ? "Accepted friend connections will appear here." : "Incoming and outgoing requests involving your account will appear here."} />}
+    })}</View> : <EmptyState icon={tab === "Nearby" ? MapPin : Users} title={tab === "Nearby" ? "No nearby riders yet" : tab === "Friends" ? "No friends yet" : "No pending requests"} description={tab === "Nearby" ? "Nearby suggestions use live location. Turn on Nearby discovery in your profile to appear for other riders." : tab === "Friends" ? "Accepted friend connections will appear here." : "Incoming and outgoing requests involving your account will appear here."} />}
   </PageShell>;
 }
 
 const styles = StyleSheet.create({
   locationCard: { marginHorizontal: 16, marginBottom: 16, padding: 12, borderRadius: 11, backgroundColor: "#E8EDDF", flexDirection: "row", alignItems: "center", gap: 10 },
+  liveLocationCard: { flexDirection: "column", alignItems: "stretch" },
+  liveSharingRow: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10 },
   locationIcon: { width: 32, height: 32, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F9F3" }, locationCopy: { flex: 1, gap: 3 }, locationTitle: { color: colors.ink, fontSize: 10, fontWeight: "700" }, locationSubtitle: { color: colors.muted, fontSize: 8 },
+  mapButton: { width: "100%", minHeight: 38, marginTop: 10, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, mapButtonText: { color: colors.forest, fontSize: 9, fontWeight: "700" },
+  liveSharingError: { marginTop: 7, color: "#9B493C", fontSize: 9, lineHeight: 13 },
   tabs: { marginHorizontal: 20, marginBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", justifyContent: "space-between", gap: 12 }, tab: { paddingBottom: 9 }, tabActive: { borderBottomWidth: 2, borderBottomColor: colors.forest }, tabText: { color: colors.muted, fontSize: 10, fontWeight: "600" }, tabTextActive: { color: colors.forest, fontWeight: "800" },
   search: { height: 39, marginHorizontal: 16, marginBottom: 18, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 8 }, searchInput: { flex: 1, color: colors.ink, fontSize: 10 },
   listHeader: { marginHorizontal: 20, marginBottom: 7, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, eyebrow: { color: colors.muted, fontSize: 7, fontWeight: "800", letterSpacing: 0.7 }, count: { color: colors.subtle, fontSize: 8 },

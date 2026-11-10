@@ -13,27 +13,30 @@ type RideCardProps = {
   actionDisabled?: boolean;
   actionError?: string;
   onViewDetails?: () => void;
+  onViewMap: () => void;
   onRequestSpot?: () => void;
   onCancelRequest?: () => void;
 };
 
-export function RideCard({ ride, requestState, viewerIsOwner = false, actionPending = false, actionDisabled = false, actionError = "", onViewDetails, onRequestSpot, onCancelRequest }: RideCardProps) {
+export function RideCard({ ride, requestState, viewerIsOwner = false, actionPending = false, actionDisabled = false, actionError = "", onViewDetails, onViewMap, onRequestSpot, onCancelRequest }: RideCardProps) {
   const [bannerPreviewOpen, setBannerPreviewOpen] = useState(false);
   const bannerUrl = getImagePublicUrl("ride-banners", ride.bannerImagePath);
   return (
     <View>
       <View style={styles.card}>
-        <Pressable accessibilityRole={bannerUrl ? "button" : undefined} accessibilityLabel={bannerUrl ? `View ${ride.title} banner` : undefined} disabled={!bannerUrl} onPress={() => setBannerPreviewOpen(true)} style={styles.routePreview}>
+        <View style={styles.routePreview}>
           {bannerUrl && <Image source={{ uri: bannerUrl }} style={[StyleSheet.absoluteFill, styles.bannerImage]} />}
           {bannerUrl && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.bannerShade]} />}
-          <View style={styles.mapIcon}><Map color={colors.leaf} size={18} /></View>
-          <View style={styles.metrics}>
+          {bannerUrl && <Pressable accessibilityRole="button" accessibilityLabel={`View ${ride.title} banner`} onPress={() => setBannerPreviewOpen(true)} style={StyleSheet.absoluteFill} />}
+          <Pressable accessibilityRole="button" accessibilityLabel={`Open ${ride.title} route map`} onPress={onViewMap} style={styles.mapIcon}><Map color={colors.leaf} size={18} /></Pressable>
+          <View pointerEvents="none" style={styles.metrics}>
             <Text style={styles.distanceText}>{ride.distance}</Text>
             <View style={styles.durationLine}><Clock3 color={colors.forest} size={11} /><Text style={styles.durationText}>{ride.duration}</Text></View>
           </View>
-        </Pressable>
+        </View>
         <View style={styles.body}>
           <View style={styles.dateLine}><CalendarDays color={colors.leaf} size={13} /><Text style={styles.dateText}>{ride.date} · {ride.time}</Text></View>
+          {ride.status !== "open" && <Text style={styles.statusText}>{ride.status === "started" ? "IN PROGRESS" : ride.status.toUpperCase()}</Text>}
           <Text style={styles.title}>{ride.title}</Text>
           <View style={styles.routeLine}><MapPin color={colors.orange} size={13} /><Text numberOfLines={1} style={styles.routeText}>{ride.route}</Text></View>
           <View style={styles.footer}>
@@ -57,12 +60,13 @@ const styles = StyleSheet.create({
   bannerShade: { backgroundColor: "#13251F66" },
   mapIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   metrics: { alignItems: "flex-end", gap: 6 },
-  distanceText: { color: colors.muted, fontSize: 9, fontWeight: "700" },
-  durationLine: { flexDirection: "row", alignItems: "center", gap: 4 },
+  distanceText: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 11, backgroundColor: colors.surface, color: colors.muted, fontSize: 9, fontWeight: "700" },
+  durationLine: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 11, backgroundColor: colors.surface },
   durationText: { color: colors.forest, fontSize: 9, fontWeight: "700" },
   body: { paddingHorizontal: 13, paddingTop: 11, paddingBottom: 12 },
   dateLine: { flexDirection: "row", alignItems: "center", gap: 6 },
   dateText: { color: colors.muted, fontSize: 9, fontWeight: "600" },
+  statusText: { marginTop: 6, color: colors.leaf, fontSize: 8, fontWeight: "800", letterSpacing: 0.6 },
   title: { marginTop: 7, color: colors.ink, fontFamily: "Georgia", fontSize: 19, fontWeight: "500" },
   routeLine: { marginTop: 6, flexDirection: "row", alignItems: "center", gap: 5 },
   routeText: { flexShrink: 1, color: colors.muted, fontSize: 9 },
