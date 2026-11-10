@@ -9,6 +9,7 @@ import { BlockedUserData, getImagePublicUrl, loadBlockedUsers, unblockUser } fro
 import { getAuthRedirectUrl } from "../../lib/auth-links";
 import { clearStore } from "../../lib/local-store";
 import { supabase } from "../../lib/supabase";
+import { disableLiveLocationSharing, stopLiveLocationTracking } from "../../services/location/live-tracking";
 
 type LifecycleAction = "deactivate" | "delete";
 
@@ -107,6 +108,8 @@ export default function AccountSettingsScreen() {
     try {
       const { error: reauthError } = await supabase.auth.signInWithPassword({ email: userEmail, password });
       if (reauthError) throw new Error("That password is incorrect. Try again.");
+      await disableLiveLocationSharing(userId);
+      await stopLiveLocationTracking(userId);
 
       if (action === "deactivate") {
         const { error: deactivateError } = await supabase.rpc("deactivate_account");

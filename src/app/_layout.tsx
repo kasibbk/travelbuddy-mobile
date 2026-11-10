@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "../components/auth-provider";
 import { SyncProvider } from "../components/sync-provider";
 import { colors } from "../components/theme";
 import { markNotificationRead, notificationHref } from "../lib/notifications";
+import "../services/location/live-tracking";
 
 export default function RootLayout() {
   return (
@@ -76,6 +77,7 @@ function RouteGuard() {
       <Stack.Screen name="notifications" options={{ presentation: "modal" }} />
       <Stack.Screen name="notifications/[group]" />
       <Stack.Screen name="location-picker" options={{ presentation: "card" }} />
+      <Stack.Screen name="friends-map" />
     </Stack>
   );
 }

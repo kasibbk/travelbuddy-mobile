@@ -7,10 +7,11 @@ import { LocationService } from "../services/location";
 import type { AppCoords, RouteResult } from "../services/location/types";
 
 const conversationsKey = "conversations-v6";
-const openRidesKey = "open-rides-v4";
-const userRidesKey = "user-rides-v4";
-const rideDetailsKey = (rideId: string) => `ride-details-v3:${rideId}`;
+const openRidesKey = "open-rides-v5";
+const userRidesKey = "user-rides-v5";
+const rideDetailsKey = (rideId: string) => `ride-details-v4:${rideId}`;
 const profileKey = "profile-v2";
+const RIDE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 export type ImageUploadAsset = {
   uri: string;
@@ -35,7 +36,7 @@ type RideRow = {
   route_data: unknown;
   capacity: number;
   banner_image_path: string | null;
-  status: "open" | "cancelled" | "completed";
+  status: "open" | "started" | "cancelled" | "completed" | "expired";
   creator: { display_name: string } | null;
 };
 
@@ -57,7 +58,7 @@ export type RideCardData = {
   description: string;
   bannerImagePath: string | null;
   startsAt: string;
-  status: "open" | "cancelled" | "completed";
+  status: "open" | "started" | "cancelled" | "completed" | "expired";
 };
 
 export type RideParticipantData = {
@@ -207,8 +208,13 @@ function mapRide(row: RideRow): RideCardData {
     description: row.description,
     bannerImagePath: row.banner_image_path,
     startsAt: row.starts_at,
-    status: row.status,
+    status: row.status === "open" && startsAt.getTime() + RIDE_EXPIRY_MS <= Date.now() ? "expired" : row.status,
   };
+}
+
+async function expireStaleRides(): Promise<void> {
+  const { error } = await supabase.rpc("expire_stale_rides");
+  if (error) throw error;
 }
 
 async function calculateRideMetrics(
@@ -225,7 +231,8 @@ async function calculateRideMetrics(
 }
 
 export async function loadOpenRides(userId: string, force = false): Promise<RideCardData[]> {
-  return localFirst(userId, openRidesKey, async () => {
+  const rides = await localFirst(userId, openRidesKey, async () => {
+    await expireStaleRides();
     const { data, error } = await supabase.from("rides")
       .select(rideSelect)
       .eq("status", "open")
@@ -235,6 +242,8 @@ export async function loadOpenRides(userId: string, force = false): Promise<Ride
     if (error) throw error;
     return ((data ?? []) as unknown as RideRow[]).map(mapRide);
   }, { force });
+  const now = Date.now();
+  return rides.filter((ride) => ride.status === "open" && new Date(ride.startsAt).getTime() > now);
 }
 
 export async function createRide(input: {
@@ -433,7 +442,8 @@ export async function assignRideAdmin(rideId: string, userId: string, assignedBy
 }
 
 export async function loadUserRides(userId: string, force = false): Promise<RideCardData[]> {
-  return localFirst(userId, userRidesKey, async () => {
+  const rides = await localFirst(userId, userRidesKey, async () => {
+    await expireStaleRides();
     const [owned, administered, approved] = await Promise.all([
       supabase.from("rides").select("id").eq("creator_id", userId),
       supabase.from("ride_admins").select("ride_id").eq("user_id", userId),
@@ -450,6 +460,9 @@ export async function loadUserRides(userId: string, force = false): Promise<Ride
     if (error) throw error;
     return ((data ?? []) as unknown as RideRow[]).map(mapRide);
   }, { force });
+  return rides.map((ride) => ride.status === "open" && new Date(ride.startsAt).getTime() + RIDE_EXPIRY_MS <= Date.now()
+    ? { ...ride, status: "expired" }
+    : ride);
 }
 
 export async function loadPendingAdminRequests(userId: string, force = false): Promise<AdminRequestData[]> {
@@ -462,13 +475,11 @@ export async function loadPendingAdminRequests(userId: string, force = false): P
   }, { force });
 }
 
-export async function loadNearbyRiders(userId: string, force = false): Promise<NearbyRiderData[]> {
-  return localFirst(userId, "nearby-riders-v2", async () => {
-    const { data, error } = await supabase.rpc("nearby_riders", { p_radius_meters: 25000, p_limit: 25 });
-    if (error) throw error;
-    return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; home_city: string | null; approximate_distance_km: number }[])
-      .map((rider) => ({ id: rider.user_id, name: rider.display_name, avatarPath: rider.avatar_path, city: rider.home_city, distanceKm: rider.approximate_distance_km }));
-  }, { force });
+export async function loadNearbyRiders(_userId: string, _force = false): Promise<NearbyRiderData[]> {
+  const { data, error } = await supabase.rpc("nearby_riders", { p_radius_meters: 25000, p_limit: 25 });
+  if (error) throw error;
+  return ((data ?? []) as { user_id: string; display_name: string; avatar_path: string | null; home_city: string | null; approximate_distance_km: number }[])
+    .map((rider) => ({ id: rider.user_id, name: rider.display_name, avatarPath: rider.avatar_path, city: rider.home_city, distanceKm: rider.approximate_distance_km }));
 }
 
 export async function searchPublicUsers(query: string): Promise<PublicUserSearchData[]> {
@@ -704,11 +715,15 @@ export async function loadConversations(userId: string, force = false): Promise<
 
  
 export async function loadRideDetails(rideId: string, userId: string, force = false): Promise<RideCardData | null> {
-  return localFirst(userId, rideDetailsKey(rideId), async () => {
+  const ride = await localFirst(userId, rideDetailsKey(rideId), async () => {
+    await expireStaleRides();
     const { data, error } = await supabase.from("rides").select(rideSelect).eq("id", rideId).maybeSingle();
     if (error) throw error;
     return data ? mapRide(data as unknown as RideRow) : null;
   }, { force });
+  return ride && ride.status === "open" && new Date(ride.startsAt).getTime() + RIDE_EXPIRY_MS <= Date.now()
+    ? { ...ride, status: "expired" }
+    : ride;
 }
 
 export async function loadRideParticipants(rideId: string, userId: string, force = false): Promise<RideParticipantData[]> {
@@ -751,6 +766,31 @@ export async function cancelRide(rideId: string, userId: string): Promise<void> 
     writeStored(userId, `ride-requests-v2:${rideId}`, [] as AdminRequestData[]),
   ]);
   await updateStored<AdminRequestData[]>(userId, "pending-admin-requests-v2", (requests) => requests.filter((request) => request.rideId !== rideId));
+}
+
+async function updateRideStatusCache(rideId: string, userId: string, status: RideCardData["status"]): Promise<void> {
+  const updateRide = (ride: RideCardData | null) => ride?.id === rideId ? { ...ride, status } : ride;
+  await refreshStored(
+    updateStored<RideCardData[]>(userId, openRidesKey, (rides) => rides.filter((ride) => ride.id !== rideId)),
+    updateStored<RideCardData[]>(userId, userRidesKey, (rides) => rides.map((ride) => updateRide(ride) as RideCardData)),
+    updateStored<RideCardData | null>(userId, rideDetailsKey(rideId), updateRide),
+  );
+}
+
+export async function startRide(rideId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc("start_ride", { p_ride_id: rideId });
+  if (error) throw error;
+  await updateRideStatusCache(rideId, userId, "started");
+  await refreshStored(
+    writeStored(userId, `ride-requests-v2:${rideId}`, [] as AdminRequestData[]),
+    updateStored<AdminRequestData[]>(userId, "pending-admin-requests-v2", (requests) => requests.filter((request) => request.rideId !== rideId)),
+  );
+}
+
+export async function endRide(rideId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc("end_ride", { p_ride_id: rideId });
+  if (error) throw error;
+  await updateRideStatusCache(rideId, userId, "completed");
 }
 
 export async function leaveRide(rideId: string, userId: string): Promise<void> {
@@ -955,40 +995,11 @@ export async function uploadRideBannerImage(userId: string, rideId: string, asse
   return uploadImage("ride-banners", path, asset);
 }
 
-export async function hasSavedProfileLocation(userId: string, force = false): Promise<boolean> {
-  return localFirst(userId, "has-location", async () => {
-    const { data, error } = await supabase.from("profile_locations").select("user_id").eq("user_id", userId).maybeSingle();
-    if (error) throw error;
-    return Boolean(data);
-  }, { force });
-}
-
-export async function saveProfileLocation(userId: string, latitude: number, longitude: number): Promise<void> {
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    throw new Error("The device returned an invalid location.");
-  }
-  const { error } = await supabase.from("profile_locations").upsert({
-    user_id: userId,
-    location: `SRID=4326;POINT(${longitude} ${latitude})`,
-  }, { onConflict: "user_id" });
-  if (error) throw error;
-  await writeStored(userId, "has-location", true);
-  await refreshStored(loadNearbyRiders(userId, true));
-}
-
-export async function removeProfileLocation(userId: string): Promise<void> {
-  const { error } = await supabase.from("profile_locations").delete().eq("user_id", userId);
-  if (error) throw error;
-  await writeStored(userId, "has-location", false);
-  await refreshStored(loadNearbyRiders(userId, true));
-}
-
 // Pulls every top-level dataset into storage; screens only read from storage afterwards.
 export async function syncAll(userId: string): Promise<void> {
   const conversationsPromise = loadConversations(userId, true);
   const results = await Promise.allSettled([
     loadProfile(userId, true),
-    hasSavedProfileLocation(userId, true),
     loadOpenRides(userId, true),
     loadNearbyRiders(userId, true),
     loadFriendRequests(userId, true),
@@ -1000,7 +1011,7 @@ export async function syncAll(userId: string): Promise<void> {
   ]);
   const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
 
-  const conversationsResult = results[5];
+  const conversationsResult = results[4];
   if (conversationsResult.status === "fulfilled") {
     const messageResults = await Promise.allSettled(
       conversationsResult.value.map((conversation) => syncMessages(conversation.id, userId)),

@@ -3,6 +3,7 @@ import { Link, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { supabase } from "../lib/supabase";
 import { colors } from "../components/theme";
+import { stopLiveLocationTracking } from "../services/location/live-tracking";
 
 export default function ActivateAccountScreen() {
   const { token_hash: tokenHash, type } = useLocalSearchParams<{ token_hash?: string; type?: string }>();
@@ -27,6 +28,9 @@ export default function ActivateAccountScreen() {
         }
         return;
       }
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (session) await stopLiveLocationTracking(session.user.id);
       await supabase.auth.signOut({ scope: "local" });
       if (active) {
         setStatus("success");

@@ -6,7 +6,14 @@ const GOOGLE_MAPS_BASE_URL = "https://maps.googleapis.com/maps/api";
 type GoogleDirectionsResponse = {
   status: string;
   error_message?: string;
-  routes?: { overview_polyline: { points: string }; legs?: { distance?: { value: number }; duration?: { value: number } }[] }[];
+  routes?: {
+    overview_polyline: { points: string };
+    legs?: {
+      distance?: { value: number };
+      duration?: { value: number };
+      steps?: { html_instructions?: string; distance?: { value: number }; duration?: { value: number } }[];
+    }[];
+  }[];
 };
 
 type GoogleGeocodingResponse = {
@@ -72,6 +79,16 @@ function decodePolyline(encoded: string): AppCoords[] {
   return points;
 }
 
+function plainInstruction(html: string | undefined): string {
+  return html?.replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, "\"")
+    .replace(/\s+/g, " ")
+    .trim() ?? "";
+}
+
 export class GoogleService implements RoutingService {
   async getDistance(start: AppCoords, end: AppCoords): Promise<number> {
     return (await this.getRoute(start, end)).distanceKilometers;
@@ -98,6 +115,15 @@ export class GoogleService implements RoutingService {
       distanceKilometers: distanceMeters / 1000,
       estimatedDurationMinutes: Math.ceil(durationSeconds / 60),
       points: decodePolyline(route.overview_polyline.points),
+      directions: (route.legs ?? []).flatMap((leg) => (leg.steps ?? []).flatMap((step) => {
+        const instruction = plainInstruction(step.html_instructions);
+        if (!instruction) return [];
+        return [{
+          instruction,
+          distanceMeters: step.distance?.value ?? 0,
+          durationSeconds: step.duration?.value ?? 0,
+        }];
+      })),
     };
   }
 

@@ -4,19 +4,28 @@ import { USE_GOOGLE_MAPS } from "../services/location";
 
 type UnifiedMapViewProps = {
   userLocation: AppCoords | null;
+  currentLocation?: AppCoords | null;
+  currentLocationTitle?: string;
   destinationLocation: AppCoords | null;
   routePoints: AppCoords[];
+  friendMarkers?: { id: string; location: AppCoords; title: string }[];
   style?: StyleProp<ViewStyle>;
   selectionMode?: boolean;
   readOnly?: boolean;
+  fitToMarkers?: boolean;
+  showUserLocationTitle?: boolean;
   userLocationTitle?: string;
   destinationTitle?: string;
   cameraTarget?: AppCoords | null;
   selectedLocation?: AppCoords | null;
   onLocationSelect?: (location: AppCoords) => void;
+  onMapPress?: () => void;
+  onFriendMarkerPress?: (friendId: string) => void;
+  routeProgress?: number | null;
+  cameraCommand?: { id: number; action: "center" | "zoom-in" | "zoom-out" | "overview" | "north"; target?: AppCoords; bearing?: number; zoom?: number; pitch?: number } | null;
 };
 
-export function UnifiedMapView({ userLocation, destinationLocation, routePoints, style, selectionMode = false, readOnly = false, selectedLocation, onLocationSelect }: UnifiedMapViewProps) {
+export function UnifiedMapView({ userLocation, currentLocation = null, currentLocationTitle = "You", destinationLocation, routePoints, friendMarkers = [], style, selectionMode = false, readOnly = false, fitToMarkers = false, showUserLocationTitle = false, userLocationTitle = "You", selectedLocation, onLocationSelect, onMapPress, onFriendMarkerPress }: UnifiedMapViewProps) {
   const mapUrl = USE_GOOGLE_MAPS
     ? "https://maps.google.com"
     : "https://www.openstreetmap.org/fixthemap";
@@ -27,8 +36,12 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
   return <View style={[styles.container, selectionMode && styles.selectionContainer, style]}>
     <Text style={styles.title}>Map preview is available in the mobile app</Text>
     <Text style={styles.details}>
-      {`Start: ${userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : "not set"}\nDestination: ${destinationLocation ? `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}` : "not set"}\nRoute points: ${routePoints.length}`}
+      {friendMarkers.length || currentLocation || (showUserLocationTitle && userLocation)
+        ? `${showUserLocationTitle && userLocation ? `${userLocationTitle}: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}\n` : ""}${currentLocation ? `${currentLocationTitle}: ${currentLocation.lat.toFixed(4)}, ${currentLocation.lng.toFixed(4)}\n` : ""}${friendMarkers.length ? `${friendMarkers.length} friend${friendMarkers.length === 1 ? "" : "s"} sharing live location\n${friendMarkers.map((friend) => friend.title).join(", ")}` : "No friends sharing live location"}`
+        : `Start: ${userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : "not set"}\nDestination: ${destinationLocation ? `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}` : "not set"}\nRoute points: ${routePoints.length}`}
     </Text>
+      {onFriendMarkerPress && friendMarkers.map((friend) => <Pressable key={friend.id} accessibilityRole="button" onPress={() => onFriendMarkerPress(friend.id)}><Text style={styles.link}>Select {friend.title}</Text></Pressable>)}
+    {onMapPress && <Pressable accessibilityRole="button" onPress={onMapPress}><Text style={styles.link}>Open full-screen map</Text></Pressable>}
     {selectionMode && <View style={styles.webPicker}>
       <Text style={styles.webPickerText}>Map pin selection is available in the mobile app.</Text>
       <Pressable accessibilityRole="button" disabled={!userLocation} onPress={() => userLocation && onLocationSelect?.(userLocation)} style={[styles.webButton, !userLocation && styles.disabled]}>
@@ -36,7 +49,7 @@ export function UnifiedMapView({ userLocation, destinationLocation, routePoints,
       </Pressable>
       {selectedLocation && <Text style={styles.details}>{`${selectedLocation.lat.toFixed(5)}, ${selectedLocation.lng.toFixed(5)}`}</Text>}
     </View>}
-    {!readOnly && <Pressable accessibilityRole="link" onPress={openMap}><Text style={styles.link}>Open map</Text></Pressable>}
+    {!readOnly && !fitToMarkers && <Pressable accessibilityRole="link" onPress={openMap}><Text style={styles.link}>Open map</Text></Pressable>}
     {!USE_GOOGLE_MAPS && <Text style={styles.attribution}>© OpenStreetMap contributors · OpenFreeMap</Text>}
   </View>;
 }
