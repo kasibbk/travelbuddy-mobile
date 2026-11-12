@@ -95,10 +95,21 @@ export default function ShareScreen() {
         : null;
       const results = await Promise.allSettled(targets.map(async (conversation) => {
         const attachmentPath = sourceMessage.attachmentPath && signedUrl
-          ? await uploadMessageMedia(userId, conversation.id, { uri: signedUrl })
+          ? await uploadMessageMedia(userId, conversation.id, {
+            uri: signedUrl,
+            mimeType: sourceMessage.attachmentMimeType,
+            fileName: sourceMessage.attachmentName ?? sourceMessage.attachmentPath.split("/").pop(),
+          })
           : null;
-        const body = sourceMessage.body === "Photo" && attachmentPath ? "" : sourceMessage.body;
-        await sendMessage(conversation.id, userId, body, { attachmentPath, isForwarded: true });
+        const body = attachmentPath && (sourceMessage.body === "Photo" || sourceMessage.body === "Attachment")
+          ? ""
+          : sourceMessage.body;
+        await sendMessage(conversation.id, userId, body, {
+          attachmentPath,
+          attachmentName: sourceMessage.attachmentName,
+          attachmentMimeType: sourceMessage.attachmentMimeType,
+          isForwarded: true,
+        });
         return conversation.id;
       }));
       const successfulIds = new Set(results.flatMap((result) =>
@@ -138,7 +149,7 @@ export default function ShareScreen() {
     </View>
     {sourceMessage && <View style={styles.sourceCard}>
       <Forward color={colors.forest} size={16} />
-      <Text numberOfLines={2} style={styles.sourceText}>{sourceMessage.attachmentPath && sourceMessage.body === "Photo" ? "Photo" : sourceMessage.body}</Text>
+      <Text numberOfLines={2} style={styles.sourceText}>{sourceMessage.attachmentPath && (sourceMessage.body === "Photo" || sourceMessage.body === "Attachment") ? sourceMessage.attachmentName ?? sourceMessage.body : sourceMessage.body}</Text>
     </View>}
     <View style={styles.searchBar}>
       <Search color={colors.muted} size={17} />

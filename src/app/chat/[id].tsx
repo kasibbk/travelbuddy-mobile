@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { Alert, ActivityIndicator, AppState, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { ArrowLeft, BellOff, ChevronsUp, Forward, ImagePlus, LogOut, MessageCircle, MoreHorizontal, Paintbrush, Reply, Search, Send, Trash2, UserPlus, Users, X } from "lucide-react-native";
+import { ArrowLeft, BellOff, ChevronsUp, FileText, Film, Forward, ImagePlus, LogOut, MessageCircle, MoreHorizontal, Music2, Paintbrush, Paperclip, Reply, Search, Send, Trash2, UserPlus, Users, X } from "lucide-react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../components/auth-provider";
@@ -10,8 +11,10 @@ import { supabase } from "../../lib/supabase";
 import { EmptyState } from "../../components/empty-state";
 import { Avatar } from "../../components/avatar";
 import { ImagePreviewModal } from "../../components/image-preview-modal";
+import { VideoAttachmentThumbnail } from "../../components/video-attachment-thumbnail";
 import { colors } from "../../components/theme";
-import { ChatBackground, clearConversationMessages, ConversationData, getImagePublicUrl, ImageUploadAsset, leaveGroupConversation, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MessageData, restoreConversation, sendMessage, setConversationActive, syncMessages, updateConversationPreferences, uploadMessageMedia } from "../../lib/app-data";
+import { useStoreVersion } from "../../lib/store-events";
+import { ChatBackground, clearConversationMessages, ConversationData, getAttachmentKind, getImagePublicUrl, ImageUploadAsset, leaveGroupConversation, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MAX_MESSAGE_ATTACHMENT_SIZE_BYTES, MessageData, restoreConversation, sendMessage, setConversationActive, syncMessages, updateConversationPreferences, uploadMessageMedia } from "../../lib/app-data";
 
 const COMPOSER_FIELD_MIN_HEIGHT = 42;
 const CHAT_BACKGROUNDS: Record<ChatBackground, { label: string; color: string }> = {
@@ -37,10 +40,21 @@ function getReplyChain(message: MessageData, messages: MessageData[]): MessageDa
   return chain.reverse();
 }
 
+function getAttachmentLabel(message: MessageData): string {
+  if (message.attachmentName) return message.attachmentName;
+  return getAttachmentKind(message.attachmentMimeType, null, message.attachmentPath) === "image" ? "Photo" : "Attachment";
+}
+
+function formatAttachmentSize(bytes: number | null | undefined): string | null {
+  if (bytes == null || !Number.isFinite(bytes)) return null;
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ChatScreen() {
   const router = useRouter();
   const { id, title: routeTitle } = useLocalSearchParams<{ id: string; title?: string }>();
   const { ready, userId } = useAuth();
+  const storeVersion = useStoreVersion();
   const [conversation, setConversation] = useState<ConversationData | null>(null);
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [senderNames, setSenderNames] = useState<Record<string, string>>({});
@@ -48,6 +62,7 @@ export default function ChatScreen() {
   const [typingUsers, setTypingUsers] = useState<{ userId: string; displayName: string }[]>([]);
   const [draft, setDraft] = useState("");
   const [attachmentAsset, setAttachmentAsset] = useState<ImageUploadAsset | null>(null);
+  const [attachmentPickerOpen, setAttachmentPickerOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<MessageData | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<MessageData | null>(null);
   const [replyChainTarget, setReplyChainTarget] = useState<MessageData | null>(null);
@@ -175,6 +190,15 @@ export default function ChatScreen() {
   const conversationId = conversation?.id;
   const lastMessageAt = messages[messages.length - 1]?.createdAt;
   useEffect(() => {
+    if (loading || !conversationId || !userId) return;
+    let active = true;
+    loadMessages(conversationId, userId)
+      .then((thread) => { if (active) setMessages(thread); })
+      .catch((cause: unknown) => console.warn("[chat] Could not refresh active conversation messages", cause));
+    return () => { active = false; };
+  }, [conversationId, loading, storeVersion, userId]);
+
+  useEffect(() => {
     if (loading || !conversationId || !userId || !lastMessageAt) return;
     void markConversationRead(conversationId, userId, lastMessageAt)
       .catch((cause: unknown) => console.warn("[chat] Could not mark messages as read", cause));
@@ -260,22 +284,54 @@ export default function ChatScreen() {
     if (offset !== undefined) messagesRef.current?.scrollTo({ y: Math.max(0, offset - 30), animated: true });
   }
 
-  async function chooseMessageImage() {
+  function openMessageAttachment(message: MessageData) {
+    if (!message.attachmentPath || !conversation) return;
+    router.push({ pathname: "/chat-attachment/[id]", params: { id: message.id, conversationId: conversation.id } });
+  }
+
+  async function chooseMessageMedia() {
     if (sending) return;
     setSendError("");
+    setAttachmentPickerOpen(false);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ["images", "videos"],
         allowsEditing: false,
         quality: 0.8,
         preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
       });
       if (result.canceled) return;
       const asset = result.assets[0];
-      if (!asset) throw new Error("No image was selected.");
-      setAttachmentAsset({ uri: asset.uri, mimeType: asset.mimeType });
+      if (!asset) throw new Error("No media was selected.");
+      if (asset.fileSize != null && asset.fileSize > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+        throw new Error("Choose an attachment smaller than 20 MB.");
+      }
+      setAttachmentAsset({
+        uri: asset.uri,
+        mimeType: asset.mimeType,
+        fileName: asset.fileName ?? (asset.type === "video" ? "Video" : "Image"),
+        fileSize: asset.fileSize,
+      });
     } catch (cause) {
-      setSendError(cause instanceof Error ? cause.message : "Could not select an image.");
+      setSendError(cause instanceof Error ? cause.message : "Could not select media.");
+    }
+  }
+
+  async function chooseMessageFile() {
+    if (sending) return;
+    setSendError("");
+    setAttachmentPickerOpen(false);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset) throw new Error("No file was selected.");
+      if (asset.size != null && asset.size > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+        throw new Error("Choose an attachment smaller than 20 MB.");
+      }
+      setAttachmentAsset({ uri: asset.uri, mimeType: asset.mimeType, fileName: asset.name, fileSize: asset.size });
+    } catch (cause) {
+      setSendError(cause instanceof Error ? cause.message : "Could not select this file.");
     }
   }
 
@@ -419,6 +475,8 @@ export default function ChatScreen() {
       const message = await sendMessage(conversation.id, userId, body, {
         replyToMessageId: replyTarget?.id ?? null,
         attachmentPath,
+        attachmentName: attachmentAsset?.fileName ?? null,
+        attachmentMimeType: attachmentAsset?.mimeType ?? null,
       });
       setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
       setReplyTarget(null);
@@ -449,15 +507,27 @@ export default function ChatScreen() {
         const repliedTo = messages.find((item) => item.id === message.replyToMessageId);
         const replyChain = message.replyToMessageId ? getReplyChain(message, messages) : [];
         const deliveryStatus = mine ? message.deliveryStatus ?? "sent" : null;
+        const attachmentKind = message.attachmentPath
+          ? getAttachmentKind(message.attachmentMimeType, message.attachmentName, message.attachmentPath)
+          : null;
         return <View key={message.id} onLayout={(event) => { messageOffsetsRef.current[message.id] = event.nativeEvent.layout.y; }} style={[styles.messageRow, mine && styles.myMessageRow]}>
           {conversation?.kind !== "direct" && !mine && <Avatar initials={senderInitials || "R"} imageUrl={getImagePublicUrl("profile-images", senderAvatarPath)} size={30} />}
           <View style={[styles.messageBubbleWrap, replyChain.length > 0 && styles.messageWithReplyChain]}>
             <Pressable onLongPress={() => setSelectedMessage(message)} delayLongPress={300} style={[styles.bubble, mine ? styles.myBubble : styles.otherBubble]}>
               {senderName && <Text style={styles.senderName}>{senderName}</Text>}
               {message.isForwarded && <View style={styles.forwardedIndicator}><Forward color={colors.forest} size={12} /><Text style={styles.forwardedLabel}>Forwarded</Text></View>}
-              {message.replyToMessageId && <Pressable accessibilityRole="button" accessibilityLabel={`Go to message replied to by ${senderDisplayName}`} onPress={() => scrollToMessage(message.replyToMessageId!)} style={styles.replyPreview}><Text numberOfLines={1} style={styles.replyPreviewText}><Text style={styles.replyPreviewSender}>{repliedTo ? senderNames[repliedTo.senderId] ?? "Rider" : "Message"}: </Text>{repliedTo ? repliedTo.attachmentPath && repliedTo.body === "Photo" ? "Photo" : repliedTo.body : "Original message unavailable"}</Text></Pressable>}
-              {message.attachmentUrl && <Pressable accessibilityRole="imagebutton" accessibilityLabel="View shared photo" onPress={() => setPreviewImage({ uri: message.attachmentUrl!, label: "Shared photo" })}><Image source={{ uri: message.attachmentUrl }} resizeMode="cover" style={styles.messageImage} /></Pressable>}
-              {message.body && (!message.attachmentPath || message.body !== "Photo") && <Text style={styles.message}>{message.body}</Text>}
+              {message.replyToMessageId && <Pressable accessibilityRole="button" accessibilityLabel={`Go to message replied to by ${senderDisplayName}`} onPress={() => scrollToMessage(message.replyToMessageId!)} style={styles.replyPreview}><Text numberOfLines={1} style={styles.replyPreviewText}><Text style={styles.replyPreviewSender}>{repliedTo ? senderNames[repliedTo.senderId] ?? "Rider" : "Message"}: </Text>{repliedTo ? repliedTo.attachmentPath ? getAttachmentLabel(repliedTo) : repliedTo.body : "Original message unavailable"}</Text></Pressable>}
+              {message.attachmentPath && (attachmentKind === "image" && message.attachmentUrl
+                ? <Pressable accessibilityRole="imagebutton" accessibilityLabel={`View ${message.attachmentName ?? "shared image"}`} onPress={() => setPreviewImage({ uri: message.attachmentUrl!, label: message.attachmentName ?? "Shared image" })}><Image source={{ uri: message.attachmentUrl }} resizeMode="cover" style={styles.messageImage} /></Pressable>
+                : attachmentKind === "video"
+                  ? <Pressable accessibilityRole="button" accessibilityLabel="Open video attachment" onPress={() => void openMessageAttachment(message)}><VideoAttachmentThumbnail attachmentPath={message.attachmentPath} style={styles.messageVideo} /></Pressable>
+                  : <Pressable accessibilityRole="button" accessibilityLabel={`Open ${message.attachmentName ?? "attachment"}`} onPress={() => void openMessageAttachment(message)} style={styles.attachmentMessageCard}>
+                    <View style={styles.attachmentMessageIcon}>{attachmentKind === "audio"
+                      ? <Music2 color={colors.forest} size={19} />
+                      : attachmentKind === "image" ? <ImagePlus color={colors.forest} size={19} /> : <FileText color={colors.forest} size={19} />}</View>
+                    <View style={styles.attachmentMessageCopy}><Text numberOfLines={1} style={styles.attachmentMessageName}>{message.attachmentName ?? "Attachment"}</Text><Text style={styles.attachmentMessageType}>{message.attachmentMimeType ?? "Tap to open"}</Text></View>
+                  </Pressable>)}
+              {message.body && (!message.attachmentPath || (message.body !== "Photo" && message.body !== "Attachment")) && <Text style={[styles.message, message.attachmentPath && styles.attachmentMessage]}>{message.body}</Text>}
               <Text style={styles.messageTime}>{new Date(message.createdAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}</Text>
               {deliveryStatus && <Text style={styles.deliveryStatus}>{deliveryStatus[0].toUpperCase() + deliveryStatus.slice(1)}</Text>}
             </Pressable>
@@ -470,12 +540,30 @@ export default function ChatScreen() {
       ? "Typing..."
       : `${typingUsers.map((person) => person.displayName).join(", ")} ${typingUsers.length === 1 ? "is" : "are"} typing...`}</Text>}
     {!!conversation && !error && !loading && <View style={[styles.composer, { paddingBottom: keyboardVisible ? 10 + COMPOSER_FIELD_MIN_HEIGHT * 0.6 : Math.max(10, insets.bottom) }]}>
-      {replyTarget && <View style={styles.composerReply}><View style={styles.composerReplyCopy}><Text style={styles.composerReplyTitle}>Replying to {senderNames[replyTarget.senderId] ?? "Rider"}</Text><Text numberOfLines={1} style={styles.composerReplyText}>{replyTarget.attachmentPath && replyTarget.body === "Photo" ? "Photo" : replyTarget.body}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Cancel reply" onPress={() => setReplyTarget(null)}><X color={colors.muted} size={18} /></Pressable></View>}
-      {attachmentAsset && <View style={styles.attachmentPreview}><Image source={{ uri: attachmentAsset.uri }} resizeMode="cover" style={styles.attachmentThumbnail} /><Text style={styles.attachmentLabel}>Photo attached</Text><Pressable accessibilityRole="button" accessibilityLabel="Remove attached photo" onPress={() => setAttachmentAsset(null)}><X color={colors.muted} size={18} /></Pressable></View>}
-      <View style={styles.composerRow}><Pressable accessibilityRole="button" accessibilityLabel="Attach photo" disabled={sending} onPress={() => void chooseMessageImage()} style={styles.attachButton}><ImagePlus color={colors.forest} size={20} /></Pressable><View style={styles.composerField}><TextInput value={draft} onChangeText={handleDraftChange} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: (!draft.trim() && !attachmentAsset) || sending }} disabled={(!draft.trim() && !attachmentAsset) || sending} onPress={() => void submitMessage()} style={[styles.sendButton, ((!draft.trim() && !attachmentAsset) || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable></View>
+      {replyTarget && <View style={styles.composerReply}><View style={styles.composerReplyCopy}><Text style={styles.composerReplyTitle}>Replying to {senderNames[replyTarget.senderId] ?? "Rider"}</Text><Text numberOfLines={1} style={styles.composerReplyText}>{replyTarget.attachmentPath ? getAttachmentLabel(replyTarget) : replyTarget.body}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Cancel reply" onPress={() => setReplyTarget(null)}><X color={colors.muted} size={18} /></Pressable></View>}
+      {attachmentAsset && <View style={styles.attachmentPreview}>
+        {getAttachmentKind(attachmentAsset.mimeType, attachmentAsset.fileName) === "image"
+          ? <Image source={{ uri: attachmentAsset.uri }} resizeMode="cover" style={styles.attachmentThumbnail} />
+          : <View style={styles.attachmentFileIcon}>{getAttachmentKind(attachmentAsset.mimeType, attachmentAsset.fileName) === "video"
+            ? <Film color={colors.forest} size={18} />
+            : getAttachmentKind(attachmentAsset.mimeType, attachmentAsset.fileName) === "audio"
+              ? <Music2 color={colors.forest} size={18} />
+              : <FileText color={colors.forest} size={18} />}</View>}
+        <View style={styles.attachmentPreviewCopy}><Text numberOfLines={1} style={styles.attachmentLabel}>{attachmentAsset.fileName ?? "Attachment selected"}</Text><Text style={styles.attachmentSize}>{formatAttachmentSize(attachmentAsset.fileSize) ?? "Ready to send"}</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Remove attachment" onPress={() => setAttachmentAsset(null)}><X color={colors.muted} size={18} /></Pressable>
+      </View>}
+      <View style={styles.composerRow}><Pressable accessibilityRole="button" accessibilityLabel="Attach a file" disabled={sending} onPress={() => setAttachmentPickerOpen(true)} style={styles.attachButton}><Paperclip color={colors.forest} size={20} /></Pressable><View style={styles.composerField}><TextInput value={draft} onChangeText={handleDraftChange} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: (!draft.trim() && !attachmentAsset) || sending }} disabled={(!draft.trim() && !attachmentAsset) || sending} onPress={() => void submitMessage()} style={[styles.sendButton, ((!draft.trim() && !attachmentAsset) || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable></View>
       {!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}
     </View>}
     <ImagePreviewModal imageUrl={previewImage?.uri ?? null} visible={!!previewImage} label={previewImage?.label ?? "Shared photo"} onClose={() => setPreviewImage(null)} />
+    <Modal transparent visible={attachmentPickerOpen} animationType="fade" onRequestClose={() => setAttachmentPickerOpen(false)}>
+      <Pressable style={styles.modalBackdrop} onPress={() => setAttachmentPickerOpen(false)}>
+        <View style={styles.messageMenu}>
+          <Pressable accessibilityRole="button" onPress={() => void chooseMessageMedia()} style={styles.menuAction}><ImagePlus color={colors.forest} size={17} /><Text style={styles.menuActionText}>Photo or video</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => void chooseMessageFile()} style={styles.menuAction}><FileText color={colors.forest} size={17} /><Text style={styles.menuActionText}>Browse files</Text></Pressable>
+        </View>
+      </Pressable>
+    </Modal>
     <Modal transparent visible={!!selectedMessage} animationType="fade" onRequestClose={() => setSelectedMessage(null)}>
       <Pressable style={styles.modalBackdrop} onPress={() => setSelectedMessage(null)}>
         <View style={styles.messageMenu}>
@@ -491,7 +579,7 @@ export default function ChatScreen() {
           <ScrollView style={styles.replyChainList}>
             {replyChainTarget && getReplyChain(replyChainTarget, messages).map((item) => <Pressable key={item.id} accessibilityRole="button" onPress={() => { setReplyChainTarget(null); requestAnimationFrame(() => scrollToMessage(item.id)); }} style={styles.replyChainItem}>
               <Text style={styles.replyChainItemSender}>{senderNames[item.senderId] ?? "Rider"}</Text>
-              <Text numberOfLines={2} style={styles.replyChainItemBody}>{item.attachmentPath && item.body === "Photo" ? "Photo" : item.body}</Text>
+              <Text numberOfLines={2} style={styles.replyChainItemBody}>{item.attachmentPath ? getAttachmentLabel(item) : item.body}</Text>
             </Pressable>)}
           </ScrollView>
         </View>
@@ -561,7 +649,10 @@ const styles = StyleSheet.create({
   composerReplyText: { color: colors.muted, fontSize: 8 },
   attachmentPreview: { minHeight: 48, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 8, backgroundColor: colors.paper, flexDirection: "row", alignItems: "center", gap: 8 },
   attachmentThumbnail: { width: 40, height: 40, borderRadius: 6 },
-  attachmentLabel: { flex: 1, color: colors.muted, fontSize: 8, fontWeight: "700" },
+  attachmentFileIcon: { width: 40, height: 40, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen },
+  attachmentPreviewCopy: { flex: 1, gap: 3 },
+  attachmentLabel: { color: colors.muted, fontSize: 8, fontWeight: "700" },
+  attachmentSize: { color: colors.subtle, fontSize: 7 },
   sendButton: { width: 42, height: 42, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   sendButtonDisabled: { opacity: 0.5 },
   sendError: { width: "100%", color: "#9B493C", fontSize: 8, lineHeight: 12 },
@@ -574,7 +665,14 @@ const styles = StyleSheet.create({
   otherBubble: { alignSelf: "flex-start", backgroundColor: colors.surface },
   myBubble: { alignSelf: "flex-end", borderColor: "#DFE8D6", borderTopLeftRadius: 13, borderTopRightRadius: 4, backgroundColor: "#EAF0DF" },
   message: { color: "#40554A", fontSize: 10, lineHeight: 15 },
+  attachmentMessage: { marginTop: 8 },
   messageImage: { width: 190, height: 140, marginTop: 4, borderRadius: 8, backgroundColor: "#E9EFE1" },
+  messageVideo: { width: 190, height: 140, marginTop: 4, borderRadius: 8, backgroundColor: "#E9EFE1" },
+  attachmentMessageCard: { minWidth: 190, maxWidth: 240, marginTop: 4, padding: 8, borderRadius: 8, backgroundColor: "#FFFFFF99", flexDirection: "row", alignItems: "center", gap: 9 },
+  attachmentMessageIcon: { width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
+  attachmentMessageCopy: { flex: 1, gap: 3 },
+  attachmentMessageName: { color: colors.ink, fontSize: 8, fontWeight: "800" },
+  attachmentMessageType: { color: colors.muted, fontSize: 7 },
   replyPreview: { marginBottom: 7, paddingHorizontal: 7, paddingVertical: 5, borderLeftWidth: 2, borderLeftColor: colors.leaf, borderRadius: 5, backgroundColor: "#FFFFFF99" },
   replyPreviewText: { color: colors.muted, fontSize: 8 },
   replyPreviewSender: { color: colors.forest, fontWeight: "800" },

@@ -13,10 +13,13 @@ const userRidesKey = "user-rides-v5";
 const rideDetailsKey = (rideId: string) => `ride-details-v4:${rideId}`;
 const profileKey = "profile-v2";
 const RIDE_EXPIRY_MS = 24 * 60 * 60 * 1000;
+export const MAX_MESSAGE_ATTACHMENT_SIZE_BYTES = 20 * 1024 * 1024;
 
 export type ImageUploadAsset = {
   uri: string;
   mimeType?: string | null;
+  fileName?: string | null;
+  fileSize?: number | null;
 };
 
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
@@ -164,10 +167,37 @@ export type MessageData = {
   createdAt: string;
   replyToMessageId: string | null;
   attachmentPath: string | null;
+  attachmentName: string | null;
+  attachmentMimeType: string | null;
   isForwarded: boolean;
   attachmentUrl?: string | null;
   deliveryStatus?: MessageDeliveryStatus;
 };
+
+export type SharedAttachmentData = {
+  id: string;
+  attachmentPath: string;
+  attachmentName: string;
+  attachmentMimeType: string | null;
+  createdAt: string;
+  kind: "image" | "video" | "audio" | "document";
+};
+
+export function getAttachmentKind(
+  mimeType: string | null | undefined,
+  fileName: string | null | undefined,
+  path?: string | null,
+): SharedAttachmentData["kind"] {
+  const normalizedType = mimeType?.split(";")[0].toLowerCase() ?? "";
+  if (normalizedType.startsWith("image/")) return "image";
+  if (normalizedType.startsWith("video/")) return "video";
+  if (normalizedType.startsWith("audio/")) return "audio";
+  const normalizedName = `${fileName ?? ""} ${path ?? ""}`.toLowerCase();
+  if (/\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)\b/.test(normalizedName)) return "image";
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|3gp)\b/.test(normalizedName)) return "video";
+  if (/\.(mp3|m4a|aac|wav|ogg|flac|opus)\b/.test(normalizedName)) return "audio";
+  return "document";
+}
 
 export type ProfileData = {
   id: string;
@@ -741,7 +771,7 @@ export async function loadConversations(userId: string, force = false): Promise<
   const [ridesResult, peersResult, messagesResult, unreadResult, settingsResult] = await Promise.all([
     rideIds.length     ? supabase.from("rides").select("id, title, banner_image_path").in("id", rideIds) : Promise.resolve({ data: [], error: null }),
     directPeerIds.length ? supabase.from("profiles").select("id, display_name, avatar_path").in("id", directPeerIds) : Promise.resolve({ data: [], error: null }),
-    supabase.from("messages").select("id, conversation_id, sender_id, body, attachment_path, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
+    supabase.from("messages").select("id, conversation_id, sender_id, body, attachment_path, attachment_name, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
     supabase.rpc("unread_conversation_counts"),
     supabase.from("conversation_user_settings")
       .select("conversation_id, muted_until, muted_forever, background, cleared_at, hidden_at")
@@ -760,13 +790,14 @@ export async function loadConversations(userId: string, force = false): Promise<
   const unreadCounts = new Map(((unreadResult.data ?? []) as { conversation_id: string; unread_count: number | string }[])
     .map((row) => [row.conversation_id, Number(row.unread_count)]));
   const settingsByConversation = new Map((settingsResult.data ?? []).map((row) => [row.conversation_id, row]));
-  const latestMessages = new Map<string, { id: string; sender_id: string; body: string; attachment_path: string | null; created_at: string }>();
+  const latestMessages = new Map<string, { id: string; sender_id: string; body: string; attachment_path: string | null; attachment_name: string | null; created_at: string }>();
   for (const message of messagesResult.data ?? []) if (!latestMessages.has(message.conversation_id)) latestMessages.set(message.conversation_id, message);
   await Promise.all([...latestMessages.entries()]
     .filter(([, message]) => message.sender_id !== userId)
     .map(([conversationId, message]) => acknowledgeMessagesDelivered(conversationId, userId, [{
       id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at,
-      replyToMessageId: null, attachmentPath: message.attachment_path, isForwarded: false,
+      replyToMessageId: null, attachmentPath: message.attachment_path, attachmentName: message.attachment_name,
+      attachmentMimeType: null, isForwarded: false,
     }])));
   const latestSenderIds = [...new Set([...latestMessages.values()]
     .map((message) => message.sender_id)
@@ -817,8 +848,10 @@ export async function loadConversations(userId: string, force = false): Promise<
       : conversation.kind === "group" ? conversation.group_name ?? "Group chat"
         : peerNames.get(peerId ?? "") ?? "Friend chat",
     detail: conversation.kind === "direct" ? "Direct conversation" : "Group conversation",
-    lastMessage: latestVisibleMessage?.attachment_path && !latestVisibleMessage.body
-      ? "Photo"
+    lastMessage: latestVisibleMessage?.attachment_path
+      ? latestVisibleMessage.body === "Photo" || latestVisibleMessage.body === "Attachment"
+        ? latestVisibleMessage.attachment_name ?? latestVisibleMessage.body
+        : latestVisibleMessage.body
       : latestVisibleMessage?.body ?? "No messages yet",
     lastMessageSender: !latestVisibleMessage ? null
       : latestVisibleMessage.sender_id === userId ? "You"
@@ -972,7 +1005,7 @@ export async function loadMessages(conversationId: string, userId: string, force
   const clearedAt = settings?.cleared_at ?? null;
   const messages = await localFirst(userId, `messages:${conversationId}`, async () => {
     let query = supabase.from("messages")
-      .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, is_forwarded")
+      .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
     if (clearedAt) query = query.gt("created_at", clearedAt);
@@ -985,6 +1018,8 @@ export async function loadMessages(conversationId: string, userId: string, force
       createdAt: message.created_at,
       replyToMessageId: message.reply_to_message_id,
       attachmentPath: message.attachment_path,
+      attachmentName: message.attachment_name,
+      attachmentMimeType: message.attachment_mime_type,
       isForwarded: message.is_forwarded,
     }));
   }, { force });
@@ -996,7 +1031,10 @@ export async function loadMessages(conversationId: string, userId: string, force
   }
   const withAttachmentUrls = await Promise.all(visibleMessages.map(async (message) => ({
     ...message,
-    attachmentUrl: message.attachmentPath ? await getMessageImageUrl(message.attachmentPath) : null,
+    attachmentUrl: message.attachmentPath
+      && getAttachmentKind(message.attachmentMimeType, message.attachmentName, message.attachmentPath) === "image"
+      ? await getMessageImageUrl(message.attachmentPath)
+      : null,
   })));
   try {
     await acknowledgeMessagesDelivered(conversationId, userId, visibleMessages);
@@ -1012,6 +1050,78 @@ export async function loadMessages(conversationId: string, userId: string, force
     console.warn("[chat] Could not refresh message delivery status", error);
     return withAttachmentUrls;
   }
+}
+
+export async function loadConversationAttachments(conversationId: string, userId: string): Promise<SharedAttachmentData[]> {
+  const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
+    .select("cleared_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (settingsError) throw settingsError;
+  const attachments: SharedAttachmentData[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    let query = supabase.from("messages")
+      .select("id, attachment_path, attachment_name, attachment_mime_type, created_at")
+      .eq("conversation_id", conversationId)
+      .not("attachment_path", "is", null)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    if (settings?.cleared_at) query = query.gt("created_at", settings.cleared_at);
+    const { data, error } = await query.range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    attachments.push(...rows.flatMap((message) => {
+      if (!message.attachment_path) return [];
+      const kind = getAttachmentKind(message.attachment_mime_type, message.attachment_name, message.attachment_path);
+      const fallbackName = kind === "image" ? "Photo" : kind === "video" ? "Video"
+        : kind === "audio" ? "Audio" : message.attachment_path.split("/").pop() ?? "Attachment";
+      return [{
+        id: message.id,
+        attachmentPath: message.attachment_path,
+        attachmentName: message.attachment_name ?? fallbackName,
+        attachmentMimeType: message.attachment_mime_type,
+        createdAt: message.created_at,
+        kind,
+      }];
+    }));
+    if (rows.length < pageSize) return attachments;
+  }
+}
+
+export async function loadConversationAttachment(
+  conversationId: string,
+  userId: string,
+  messageId: string,
+): Promise<SharedAttachmentData & { signedUrl: string }> {
+  const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
+    .select("cleared_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (settingsError) throw settingsError;
+  let query = supabase.from("messages")
+    .select("id, attachment_path, attachment_name, attachment_mime_type, created_at")
+    .eq("id", messageId)
+    .eq("conversation_id", conversationId)
+    .not("attachment_path", "is", null);
+  if (settings?.cleared_at) query = query.gt("created_at", settings.cleared_at);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!data?.attachment_path) throw new Error("This attachment is no longer available.");
+  const kind = getAttachmentKind(data.attachment_mime_type, data.attachment_name, data.attachment_path);
+  const fallbackName = kind === "image" ? "Photo" : kind === "video" ? "Video"
+    : kind === "audio" ? "Audio" : data.attachment_path.split("/").pop() ?? "Attachment";
+  return {
+    id: data.id,
+    attachmentPath: data.attachment_path,
+    attachmentName: data.attachment_name ?? fallbackName,
+    attachmentMimeType: data.attachment_mime_type,
+    createdAt: data.created_at,
+    kind,
+    signedUrl: await getMessageImageUrl(data.attachment_path),
+  };
 }
 
 // Fetches only messages newer than what is stored and appends them.
@@ -1042,7 +1152,7 @@ export async function syncMessages(conversationId: string, userId: string): Prom
     return;
   }
   const last = stored[stored.length - 1]?.createdAt;
-  let query = supabase.from("messages").select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, is_forwarded").eq("conversation_id", conversationId).order("created_at", { ascending: true });
+  let query = supabase.from("messages").select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded").eq("conversation_id", conversationId).order("created_at", { ascending: true });
   if (clearedAt) query = query.gt("created_at", clearedAt);
   if (last) query = query.gte("created_at", last);
   const { data, error } = await query;
@@ -1055,6 +1165,8 @@ export async function syncMessages(conversationId: string, userId: string): Prom
     createdAt: message.created_at,
     replyToMessageId: message.reply_to_message_id,
     attachmentPath: message.attachment_path,
+    attachmentName: message.attachment_name,
+    attachmentMimeType: message.attachment_mime_type,
     isForwarded: message.is_forwarded,
   }));
   const combined = [...stored, ...fresh].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -1070,18 +1182,28 @@ export async function sendMessage(
   conversationId: string,
   senderId: string,
   body: string,
-  options: { replyToMessageId?: string | null; attachmentPath?: string | null; isForwarded?: boolean } = {},
+  options: {
+    replyToMessageId?: string | null;
+    attachmentPath?: string | null;
+    attachmentName?: string | null;
+    attachmentMimeType?: string | null;
+    isForwarded?: boolean;
+  } = {},
 ): Promise<MessageData> {
   const { data, error } = await supabase.from("messages")
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
-      body: body.trim() || (options.attachmentPath ? "Photo" : ""),
+      body: body.trim() || (options.attachmentPath
+        ? options.attachmentMimeType?.startsWith("image/") ? "Photo" : "Attachment"
+        : ""),
       reply_to_message_id: options.replyToMessageId ?? null,
       attachment_path: options.attachmentPath ?? null,
+      attachment_name: options.attachmentName ?? null,
+      attachment_mime_type: options.attachmentMimeType ?? null,
       is_forwarded: options.isForwarded ?? false,
     })
-    .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, is_forwarded")
+    .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded")
     .single();
   if (error) throw error;
   const message: MessageData = {
@@ -1091,8 +1213,13 @@ export async function sendMessage(
     createdAt: data.created_at,
     replyToMessageId: data.reply_to_message_id,
     attachmentPath: data.attachment_path,
+    attachmentName: data.attachment_name,
+    attachmentMimeType: data.attachment_mime_type,
     isForwarded: data.is_forwarded,
-    attachmentUrl: data.attachment_path ? await getMessageImageUrl(data.attachment_path) : null,
+    attachmentUrl: data.attachment_path
+      && getAttachmentKind(data.attachment_mime_type, data.attachment_name, data.attachment_path) === "image"
+      ? await getMessageImageUrl(data.attachment_path)
+      : null,
     deliveryStatus: "sent",
   };
   const storedMessage = { ...message };
@@ -1164,7 +1291,7 @@ export function getImagePublicUrl(bucket: "profile-images" | "ride-banners", pat
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
-async function uploadImage(bucket: "profile-images" | "ride-banners" | "message-media", path: string, asset: ImageUploadAsset): Promise<string> {
+async function uploadImage(bucket: "profile-images" | "ride-banners", path: string, asset: ImageUploadAsset): Promise<string> {
   const response = await fetch(asset.uri);
   if (!response.ok) throw new Error("Could not read the selected image.");
   const image = await response.arrayBuffer();
@@ -1210,7 +1337,39 @@ export async function uploadRideBannerImage(userId: string, rideId: string, asse
 
 export async function uploadMessageMedia(userId: string, conversationId: string, asset: ImageUploadAsset): Promise<string> {
   const path = `${userId}/${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return uploadImage("message-media", path, asset);
+  if (asset.fileSize != null && asset.fileSize > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+    throw new Error("Choose an attachment smaller than 20 MB.");
+  }
+  const response = await fetch(asset.uri);
+  if (!response.ok) throw new Error("Could not read the selected attachment.");
+  const file = await response.arrayBuffer();
+  if (file.byteLength > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+    throw new Error("Choose an attachment smaller than 20 MB.");
+  }
+  const contentType = (asset.mimeType || response.headers.get("content-type") || "application/octet-stream")
+    .split(";")[0].trim().toLowerCase();
+  const extension = asset.fileName?.match(/\.([a-z0-9]{1,10})$/i)?.[1]?.toLowerCase()
+    ?? ({
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/heic": "heic",
+      "video/mp4": "mp4",
+      "video/quicktime": "mov",
+      "video/webm": "webm",
+      "audio/mpeg": "mp3",
+      "audio/mp4": "m4a",
+      "audio/wav": "wav",
+      "application/pdf": "pdf",
+    } as Record<string, string>)[contentType]
+    ?? "bin";
+  const storagePath = `${path}.${extension}`;
+  const { error } = await supabase.storage.from("message-media").upload(storagePath, file, {
+    cacheControl: "3600",
+    contentType,
+  });
+  if (error) throw error;
+  return storagePath;
 }
 
 export async function getMessageImageUrl(path: string): Promise<string> {

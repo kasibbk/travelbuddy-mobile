@@ -1,14 +1,17 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, ArrowRight, Bike, CalendarDays, MessageCircle, Users } from "lucide-react-native";
+import { ArrowLeft, ArrowRight, Bike, CalendarDays, Film, Image as ImageIcon, MessageCircle, Music2, Users } from "lucide-react-native";
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../../components/auth-provider";
 import { useStoreVersion } from "../../lib/store-events";
 import { Avatar } from "../../components/avatar";
 import { EmptyState } from "../../components/empty-state";
 import { ImagePreviewModal } from "../../components/image-preview-modal";
+import { VideoAttachmentThumbnail } from "../../components/video-attachment-thumbnail";
 import { colors } from "../../components/theme";
-import { ConversationData, ConversationParticipantData, createDirectConversation, getImagePublicUrl, loadConversationParticipants, loadConversations, loadFriendRequests, loadSharedActiveRides, SharedRideData } from "../../lib/app-data";
+import { ConversationData, ConversationParticipantData, createDirectConversation, getImagePublicUrl, getMessageImageUrl, loadConversationAttachments, loadConversationParticipants, loadConversations, loadFriendRequests, loadSharedActiveRides, SharedAttachmentData, SharedRideData } from "../../lib/app-data";
+
+type RecentMediaItem = SharedAttachmentData & { signedUrl: string | null };
 
 export default function ChatDetailsScreen() {
   const router = useRouter();
@@ -17,6 +20,8 @@ export default function ChatDetailsScreen() {
   const [conversation, setConversation] = useState<ConversationData | null>(null);
   const [participants, setParticipants] = useState<ConversationParticipantData[]>([]);
   const [sharedRides, setSharedRides] = useState<SharedRideData[]>([]);
+  const [recentMedia, setRecentMedia] = useState<RecentMediaItem[]>([]);
+  const [sharedMediaCount, setSharedMediaCount] = useState(0);
   const [acceptedFriendIds, setAcceptedFriendIds] = useState<string[]>([]);
   const [directConversations, setDirectConversations] = useState<ConversationData[]>([]);
   const [chattingUserId, setChattingUserId] = useState("");
@@ -36,14 +41,27 @@ export default function ChatDetailsScreen() {
         const [rows, friendships] = await Promise.all([loadConversations(viewerId), loadFriendRequests(viewerId)]);
         const selected = rows.find((row) => row.id === id);
         if (!selected) throw new Error("This conversation isn’t available to your account.");
-        const [members, rides] = await Promise.all([
+        const [members, rides, attachments] = await Promise.all([
           loadConversationParticipants(id, viewerId),
           selected.kind === "direct" && selected.otherUserId ? loadSharedActiveRides(selected.otherUserId, viewerId) : Promise.resolve([] as SharedRideData[]),
+          loadConversationAttachments(id, viewerId),
         ]);
+        const media = attachments.filter((attachment) => attachment.kind !== "document");
+        const previews = await Promise.all(media.slice(0, 4).map(async (attachment) => {
+          if (attachment.kind !== "image") return { ...attachment, signedUrl: null };
+          try {
+            return { ...attachment, signedUrl: await getMessageImageUrl(attachment.attachmentPath) };
+          } catch (cause) {
+            console.warn("[chat-details] Could not load shared media preview", cause);
+            return { ...attachment, signedUrl: null };
+          }
+        }));
         if (!active) return;
         setConversation(selected);
         setParticipants(members);
         setSharedRides(rides);
+        setRecentMedia(previews);
+        setSharedMediaCount(media.length);
         setDirectConversations(rows.filter((row) => row.kind === "direct"));
         setAcceptedFriendIds(friendships.filter((friend) => friend.status === "accepted").map((friend) => friend.otherUserId));
       } catch (cause) {
@@ -71,6 +89,10 @@ export default function ChatDetailsScreen() {
     }
   }
 
+  function openSharedMedia(attachment: RecentMediaItem) {
+    router.push({ pathname: "/chat-attachment/[id]", params: { id: attachment.id, conversationId: id } });
+  }
+
   const directPeer = conversation?.kind === "direct"
     ? participants.find((person) => person.userId === conversation.otherUserId)
     : null;
@@ -85,8 +107,8 @@ export default function ChatDetailsScreen() {
       <View style={styles.titleBlock}>{directPeer ? <Avatar initials={directPeer.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", directPeer.avatarPath)} size={58} /> : !groupBannerUrl ? <View style={styles.titleIcon}><MessageCircle color={colors.lime} size={17} /></View> : null}{!groupBannerUrl && <><Text style={styles.title}>{conversation.title}</Text><Text style={styles.subtitle}>{conversation.detail}</Text></>}</View>
       <ImagePreviewModal imageUrl={groupBannerUrl} visible={bannerPreviewOpen} label={conversation.title} onClose={() => setBannerPreviewOpen(false)} />
       {conversation.kind === "ride" && conversation.rideId && <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/rides/[id]", params: { id: conversation.rideId! } })} style={styles.rideLink}><View style={styles.rideIcon}><Bike color={colors.forest} size={16} /></View><View style={styles.rideCopy}><Text style={styles.rideTitle}>Ride details</Text><Text style={styles.rideSubtitle}>View route, members, and ride status</Text></View><ArrowRight color={colors.muted} size={16} /></Pressable>}
+      {!!actionError && <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text>}
       <View style={styles.sectionHeader}><Users color={colors.leaf} size={16} /><Text style={styles.sectionTitle}>Participants</Text><Text style={styles.count}>{participants.length}</Text></View>
-      {conversation.kind === "ride" && !!actionError && <Text accessibilityRole="alert" style={styles.error}>{actionError}</Text>}
       {participants.length ? <View style={styles.peopleList}>{participants.map((person) => {
         const isSelf = person.userId === userId;
         const personContent = <><Avatar initials={person.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} imageUrl={getImagePublicUrl("profile-images", person.avatarPath)} size={36} /><View style={styles.personCopy}><Text style={styles.personName}>{person.displayName}{isSelf ? " · You" : ""}</Text><Text style={styles.personDetail}>{new Date(person.joinedAt).toLocaleDateString()}</Text></View></>;
@@ -95,6 +117,22 @@ export default function ChatDetailsScreen() {
           {conversation.kind === "ride" && !isSelf && acceptedFriendIds.includes(person.userId) ? <Pressable accessibilityRole="button" accessibilityLabel={`Chat with ${person.displayName}`} disabled={!!chattingUserId} onPress={() => openDirectChat(person)} style={[styles.chatAction, !!chattingUserId && styles.chatActionBusy]}>{chattingUserId === person.userId ? <ActivityIndicator size="small" color={colors.forest} /> : <MessageCircle color={colors.forest} size={15} />}</Pressable> : !isSelf ? <ArrowRight color={colors.subtle} size={14} /> : null}
         </View>;
       })}</View> : <EmptyState icon={Users} title="No participants" description="Conversation members will appear here." />}
+      <View style={styles.sectionHeader}>
+        <Film color={colors.leaf} size={16} />
+        <Text style={styles.sectionTitle}>Shared media</Text>
+        <Text style={styles.count}>{sharedMediaCount}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="View all shared media and documents" onPress={() => router.push({ pathname: "/chat-media/[id]", params: { id } })} style={styles.viewAllButton}>
+          <Text style={styles.viewAll}>View all</Text><ArrowRight color={colors.forest} size={13} />
+        </Pressable>
+      </View>
+      {recentMedia.length ? <View style={styles.mediaStrip}>{recentMedia.map((attachment) => <Pressable key={attachment.id} accessibilityRole="button" accessibilityLabel={`Open ${attachment.attachmentName}`} onPress={() => void openSharedMedia(attachment)} style={styles.mediaTile}>
+        {attachment.kind === "image" && attachment.signedUrl
+          ? <Image source={{ uri: attachment.signedUrl }} resizeMode="cover" style={styles.mediaTileImage} />
+          : attachment.kind === "video"
+            ? <VideoAttachmentThumbnail attachmentPath={attachment.attachmentPath} style={styles.mediaTileImage} />
+          : <View style={styles.mediaTilePlaceholder}>{attachment.kind === "image" ? <ImageIcon color={colors.forest} size={20} /> : attachment.kind === "video" ? <Film color={colors.forest} size={20} /> : <Music2 color={colors.forest} size={20} />}</View>}
+        <Text numberOfLines={1} style={styles.mediaTileName}>{attachment.attachmentName}</Text>
+      </Pressable>)}</View> : <Text style={styles.noMedia}>No shared media yet.</Text>}
       {conversation.kind === "direct" && <><View style={styles.sectionHeader}><CalendarDays color={colors.leaf} size={16} /><Text style={styles.sectionTitle}>Common active rides</Text><Text style={styles.count}>{sharedRides.length}</Text></View>{sharedRides.length ? <View style={styles.peopleList}>{sharedRides.map((ride) => <Pressable key={ride.id} onPress={() => router.push({ pathname: "/rides/[id]", params: { id: ride.id } })} style={styles.rideRow}><View style={styles.rideCopy}><Text numberOfLines={1} style={styles.rideTitle}>{ride.title}</Text><Text numberOfLines={1} style={styles.rideSubtitle}>{ride.route} · {new Date(ride.startsAt).toLocaleDateString()}</Text><Text numberOfLines={1} style={styles.rideSubtitle}>{ride.distance} · {ride.duration}</Text></View><ArrowRight color={colors.subtle} size={14} /></Pressable>)}</View> : <EmptyState icon={CalendarDays} title="No common active rides" description="Upcoming rides shared by both riders will appear here." />}</>}
     </ScrollView>}
   </View>;
@@ -121,6 +159,14 @@ const styles = StyleSheet.create({
   sectionHeader: { marginHorizontal: 20, marginTop: 19, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 7 },
   sectionTitle: { flex: 1, color: colors.ink, fontSize: 10, fontWeight: "800" },
   count: { color: colors.muted, fontSize: 8 },
+  viewAllButton: { flexDirection: "row", alignItems: "center", gap: 3 },
+  viewAll: { color: colors.forest, fontSize: 8, fontWeight: "800" },
+  mediaStrip: { marginHorizontal: 16, flexDirection: "row", gap: 8 },
+  mediaTile: { width: 76, alignItems: "center", gap: 4 },
+  mediaTileImage: { width: 72, height: 65, borderRadius: 8, backgroundColor: colors.paleGreen },
+  mediaTilePlaceholder: { width: 72, height: 65, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.paleGreen },
+  mediaTileName: { width: "100%", color: colors.muted, fontSize: 7, textAlign: "center" },
+  noMedia: { marginHorizontal: 20, color: colors.muted, fontSize: 8 },
   error: { marginHorizontal: 18, marginTop: 8, color: "#9B493C", fontSize: 8, lineHeight: 12 },
   peopleList: { marginHorizontal: 16, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface },
   personRow: { minHeight: 58, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", gap: 9 },
