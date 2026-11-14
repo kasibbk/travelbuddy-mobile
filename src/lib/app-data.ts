@@ -1,21 +1,25 @@
 import { supabase } from "./supabase";
 import { localFirst } from "./local-first";
-import { readStored, updateStored, writeStored } from "./local-store";
+import { readStored, removeStored, updateStored, writeStored } from "./local-store";
 import { loadNotifications } from "./notifications";
 import { formatRideDistance, formatRideDuration } from "./ride-format";
 import { LocationService } from "../services/location";
 import type { AppCoords, RouteResult } from "../services/location/types";
 
-const conversationsKey = "conversations-v6";
+const conversationsKey = "conversations-v7";
+const messageClearEpoch = new Map<string, number>();
 const openRidesKey = "open-rides-v5";
 const userRidesKey = "user-rides-v5";
 const rideDetailsKey = (rideId: string) => `ride-details-v4:${rideId}`;
 const profileKey = "profile-v2";
 const RIDE_EXPIRY_MS = 24 * 60 * 60 * 1000;
+export const MAX_MESSAGE_ATTACHMENT_SIZE_BYTES = 20 * 1024 * 1024;
 
 export type ImageUploadAsset = {
   uri: string;
   mimeType?: string | null;
+  fileName?: string | null;
+  fileSize?: number | null;
 };
 
 // Mutations already succeeded on the server, so a failed follow-up refresh must not surface as a mutation error.
@@ -134,7 +138,7 @@ export type FriendData = {
 
 export type ConversationData = {
   id: string;
-  kind: "direct" | "ride";
+  kind: "direct" | "ride" | "group";
   rideId: string | null;
   otherUserId: string | null;
   avatarPath: string | null;
@@ -146,7 +150,13 @@ export type ConversationData = {
   lastMessageStatus: MessageDeliveryStatus | null;
   updatedAt: string;
   unreadCount: number;
+  mutedUntil: string | null;
+  mutedForever: boolean;
+  background: ChatBackground;
+  clearedAt: string | null;
 };
+
+export type ChatBackground = "default" | "forest" | "ocean" | "rose" | "sand" | "lavender";
 
 export type MessageDeliveryStatus = "sent" | "delivered" | "read";
 
@@ -155,8 +165,39 @@ export type MessageData = {
   senderId: string;
   body: string;
   createdAt: string;
+  replyToMessageId: string | null;
+  attachmentPath: string | null;
+  attachmentName: string | null;
+  attachmentMimeType: string | null;
+  isForwarded: boolean;
+  attachmentUrl?: string | null;
   deliveryStatus?: MessageDeliveryStatus;
 };
+
+export type SharedAttachmentData = {
+  id: string;
+  attachmentPath: string;
+  attachmentName: string;
+  attachmentMimeType: string | null;
+  createdAt: string;
+  kind: "image" | "video" | "audio" | "document";
+};
+
+export function getAttachmentKind(
+  mimeType: string | null | undefined,
+  fileName: string | null | undefined,
+  path?: string | null,
+): SharedAttachmentData["kind"] {
+  const normalizedType = mimeType?.split(";")[0].toLowerCase() ?? "";
+  if (normalizedType.startsWith("image/")) return "image";
+  if (normalizedType.startsWith("video/")) return "video";
+  if (normalizedType.startsWith("audio/")) return "audio";
+  const normalizedName = `${fileName ?? ""} ${path ?? ""}`.toLowerCase();
+  if (/\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)\b/.test(normalizedName)) return "image";
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|3gp)\b/.test(normalizedName)) return "video";
+  if (/\.(mp3|m4a|aac|wav|ogg|flac|opus)\b/.test(normalizedName)) return "audio";
+  return "document";
+}
 
 export type ProfileData = {
   id: string;
@@ -552,8 +593,96 @@ export async function unblockUser(userId: string): Promise<void> {
 export async function createDirectConversation(otherUserId: string, currentUserId: string): Promise<string> {
   const { data, error } = await supabase.rpc("create_direct_conversation", { p_other_user_id: otherUserId });
   if (error) throw error;
+  const { error: restoreError } = await supabase.rpc("restore_conversation", { p_conversation_id: data });
+  if (restoreError) throw restoreError;
   await refreshStored(loadConversations(currentUserId, true));
   return data;
+}
+
+export async function restoreConversation(conversationId: string): Promise<void> {
+  const { error } = await supabase.rpc("restore_conversation", { p_conversation_id: conversationId });
+  if (error) throw error;
+}
+
+export async function createGroupConversation(userIds: string[], groupName: string, currentUserId: string): Promise<string> {
+  const { data, error } = await supabase.rpc("create_group_conversation", {
+    p_user_ids: userIds,
+    p_group_name: groupName,
+  });
+  if (error) throw error;
+  await refreshStored(loadConversations(currentUserId, true));
+  return data;
+}
+
+export async function addGroupConversationMembers(conversationId: string, userIds: string[], currentUserId: string): Promise<void> {
+  const { error } = await supabase.rpc("add_group_conversation_members", {
+    p_conversation_id: conversationId,
+    p_user_ids: userIds,
+  });
+  if (error) throw error;
+  await refreshStored(
+    loadConversations(currentUserId, true),
+    loadConversationParticipants(conversationId, currentUserId, true),
+  );
+}
+
+export async function updateConversationPreferences(
+  userId: string,
+  conversationId: string,
+  options: {
+    updateMute?: boolean;
+    mutedUntil?: string | null;
+    mutedForever?: boolean;
+    background?: ChatBackground;
+    clearChat?: boolean;
+    deleteChat?: boolean;
+  },
+): Promise<void> {
+  if (options.clearChat || options.deleteChat) {
+    const key = `${userId}:${conversationId}`;
+    messageClearEpoch.set(key, (messageClearEpoch.get(key) ?? 0) + 1);
+  }
+  const { error } = await supabase.rpc("update_conversation_preferences", {
+    p_conversation_id: conversationId,
+    p_update_mute: options.updateMute ?? false,
+    p_muted_until: options.mutedUntil ?? null,
+    p_muted_forever: options.mutedForever ?? false,
+    p_background: options.background ?? null,
+    p_clear_chat: options.clearChat ?? false,
+    p_delete_chat: options.deleteChat ?? false,
+  });
+  if (error) throw error;
+  if (options.clearChat || options.deleteChat) {
+    await writeStored<MessageData[]>(userId, `messages:${conversationId}`, []);
+  }
+  await updateStored<ConversationData[]>(userId, conversationsKey, (rows) => {
+    if (options.deleteChat) return rows.filter((row) => row.id !== conversationId);
+    return rows.map((row) => row.id === conversationId ? {
+      ...row,
+      ...(options.updateMute ? {
+        mutedUntil: options.mutedUntil ?? null,
+        mutedForever: options.mutedForever ?? false,
+      } : {}),
+      ...(options.background ? { background: options.background } : {}),
+      ...(options.clearChat ? { lastMessage: "No messages yet", clearedAt: new Date().toISOString() } : {}),
+    } : row);
+  });
+}
+
+export async function leaveGroupConversation(userId: string, conversationId: string, deleteChat: boolean): Promise<void> {
+  const { error } = await supabase.rpc("leave_group_conversation", {
+    p_conversation_id: conversationId,
+    p_delete_chat: deleteChat,
+  });
+  if (error) throw error;
+  await Promise.all([
+    removeStored(userId, `messages:${conversationId}`),
+    updateStored<ConversationData[]>(userId, conversationsKey, (rows) => rows.filter((row) => row.id !== conversationId)),
+  ]);
+}
+
+export async function clearConversationMessages(userId: string, conversationId: string): Promise<void> {
+  await updateConversationPreferences(userId, conversationId, { clearChat: true });
 }
 
 export async function setConversationActive(conversationId: string, sessionId: string, active: boolean): Promise<void> {
@@ -623,11 +752,11 @@ async function addDeliveryStatuses(userId: string, messages: MessageData[]): Pro
 export async function loadConversations(userId: string, force = false): Promise<ConversationData[]> {
   return localFirst(userId, conversationsKey, async () => {
   const { data: memberships, error } = await supabase.from("conversation_members")
-    .select("conversation_id, conversation:conversations(id, kind, ride_id, direct_user_low, direct_user_high, created_at)")
+    .select("conversation_id, conversation:conversations(id, kind, ride_id, group_name, direct_user_low, direct_user_high, created_at)")
     .eq("user_id", userId);
   if (error) throw error;
   const conversations = (memberships ?? []).flatMap((row) => Array.isArray(row.conversation) ? row.conversation : row.conversation ? [row.conversation] : []) as unknown as {
-    id: string; kind: "direct" | "ride"; ride_id: string | null; direct_user_low: string | null;
+    id: string; kind: "direct" | "ride" | "group"; ride_id: string | null; group_name: string | null; direct_user_low: string | null;
     direct_user_high: string | null; created_at: string;
   }[];
   if (conversations.length === 0) return [];
@@ -639,28 +768,36 @@ export async function loadConversations(userId: string, force = false): Promise<
     return peerId ? [peerId] : [];
   }))];
   const conversationIds = conversations.map((conversation) => conversation.id);
-  const [ridesResult, peersResult, messagesResult, unreadResult] = await Promise.all([
+  const [ridesResult, peersResult, messagesResult, unreadResult, settingsResult] = await Promise.all([
     rideIds.length     ? supabase.from("rides").select("id, title, banner_image_path").in("id", rideIds) : Promise.resolve({ data: [], error: null }),
     directPeerIds.length ? supabase.from("profiles").select("id, display_name, avatar_path").in("id", directPeerIds) : Promise.resolve({ data: [], error: null }),
-    supabase.from("messages").select("id, conversation_id, sender_id, body, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
+    supabase.from("messages").select("id, conversation_id, sender_id, body, attachment_path, attachment_name, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100),
     supabase.rpc("unread_conversation_counts"),
+    supabase.from("conversation_user_settings")
+      .select("conversation_id, muted_until, muted_forever, background, cleared_at, hidden_at")
+      .eq("user_id", userId)
+      .in("conversation_id", conversationIds),
   ]);
   if (ridesResult.error) throw ridesResult.error;
   if (peersResult.error) throw peersResult.error;
   if (messagesResult.error) throw messagesResult.error;
   if (unreadResult.error) throw unreadResult.error;
+  if (settingsResult.error) throw settingsResult.error;
   const rideTitles = new Map((ridesResult.data ?? []).map((ride) => [ride.id, ride.title]));
   const rideBannerPaths = new Map((ridesResult.data ?? []).map((ride) => [ride.id, ride.banner_image_path]));
   const peerNames = new Map((peersResult.data ?? []).map((profile) => [profile.id, profile.display_name]));
   const peerAvatarPaths = new Map((peersResult.data ?? []).map((profile) => [profile.id, profile.avatar_path]));
   const unreadCounts = new Map(((unreadResult.data ?? []) as { conversation_id: string; unread_count: number | string }[])
     .map((row) => [row.conversation_id, Number(row.unread_count)]));
-  const latestMessages = new Map<string, { id: string; sender_id: string; body: string; created_at: string }>();
+  const settingsByConversation = new Map((settingsResult.data ?? []).map((row) => [row.conversation_id, row]));
+  const latestMessages = new Map<string, { id: string; sender_id: string; body: string; attachment_path: string | null; attachment_name: string | null; created_at: string }>();
   for (const message of messagesResult.data ?? []) if (!latestMessages.has(message.conversation_id)) latestMessages.set(message.conversation_id, message);
   await Promise.all([...latestMessages.entries()]
     .filter(([, message]) => message.sender_id !== userId)
     .map(([conversationId, message]) => acknowledgeMessagesDelivered(conversationId, userId, [{
       id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at,
+      replyToMessageId: null, attachmentPath: message.attachment_path, attachmentName: message.attachment_name,
+      attachmentMimeType: null, isForwarded: false,
     }])));
   const latestSenderIds = [...new Set([...latestMessages.values()]
     .map((message) => message.sender_id)
@@ -685,7 +822,17 @@ export async function loadConversations(userId: string, force = false): Promise<
     .filter(([, message]) => message.sender_id === userId)
     .map(([, message]) => message);
   const latestDeliveryStatuses = await loadMessageDeliveryStatuses(userId, ownLatestMessageIds.map((message) => message.id));
-  return conversations.map((conversation) => ({
+  return conversations
+    .filter((conversation) => !settingsByConversation.get(conversation.id)?.hidden_at)
+    .map((conversation) => {
+    const settings = settingsByConversation.get(conversation.id);
+    const latestMessage = latestMessages.get(conversation.id);
+    const latestVisibleMessage = latestMessage
+      && (!settings?.cleared_at || latestMessage.created_at > settings.cleared_at)
+      ? latestMessage
+      : undefined;
+    const peerId = conversation.direct_user_low === userId ? conversation.direct_user_high : conversation.direct_user_low;
+    return ({
     id: conversation.id,
     kind: conversation.kind,
     rideId: conversation.ride_id,
@@ -696,20 +843,32 @@ export async function loadConversations(userId: string, force = false): Promise<
     bannerImagePath: conversation.kind === "ride" && conversation.ride_id
       ? rideBannerPaths.get(conversation.ride_id) ?? null
       : null,
-    title: conversation.kind === "ride" && conversation.ride_id ? rideTitles.get(conversation.ride_id) ?? "Ride chat" : peerNames.get(conversation.direct_user_low === userId ? conversation.direct_user_high ?? "" : conversation.direct_user_low ?? "") ?? "Friend chat",
-    detail: conversation.kind === "ride" ? "Ride group conversation" : "Direct conversation",
-    lastMessage: latestMessages.get(conversation.id)?.body ?? "No messages yet",
-    lastMessageSender: !latestMessages.has(conversation.id) ? null
-      : latestMessages.get(conversation.id)?.sender_id === userId ? "You"
-        : latestSenderNames.get(latestMessages.get(conversation.id)?.sender_id ?? "")
-          ?? peerNames.get(latestMessages.get(conversation.id)?.sender_id ?? "")
+    title: conversation.kind === "ride" && conversation.ride_id
+      ? rideTitles.get(conversation.ride_id) ?? "Ride chat"
+      : conversation.kind === "group" ? conversation.group_name ?? "Group chat"
+        : peerNames.get(peerId ?? "") ?? "Friend chat",
+    detail: conversation.kind === "direct" ? "Direct conversation" : "Group conversation",
+    lastMessage: latestVisibleMessage?.attachment_path
+      ? latestVisibleMessage.body === "Photo" || latestVisibleMessage.body === "Attachment"
+        ? latestVisibleMessage.attachment_name ?? latestVisibleMessage.body
+        : latestVisibleMessage.body
+      : latestVisibleMessage?.body ?? "No messages yet",
+    lastMessageSender: !latestVisibleMessage ? null
+      : latestVisibleMessage.sender_id === userId ? "You"
+        : latestSenderNames.get(latestVisibleMessage.sender_id)
+          ?? peerNames.get(latestVisibleMessage.sender_id)
           ?? "Rider",
-    lastMessageStatus: latestMessages.get(conversation.id)?.sender_id === userId
-      ? latestDeliveryStatuses.get(latestMessages.get(conversation.id)?.id ?? "") ?? "sent"
+    lastMessageStatus: latestVisibleMessage?.sender_id === userId
+      ? latestDeliveryStatuses.get(latestVisibleMessage.id) ?? "sent"
       : null,
-    updatedAt: latestMessages.get(conversation.id)?.created_at ?? conversation.created_at,
+    updatedAt: latestVisibleMessage?.created_at ?? conversation.created_at,
     unreadCount: unreadCounts.get(conversation.id) ?? 0,
-  })).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    mutedUntil: settings?.muted_until ?? null,
+    mutedForever: settings?.muted_forever ?? false,
+    background: (settings?.background ?? "default") as ChatBackground,
+    clearedAt: settings?.cleared_at ?? null,
+  });
+  }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, { force });
 }
 
@@ -837,54 +996,235 @@ export async function loadSharedActiveRides(otherUserId: string, userId: string,
 }
 
 export async function loadMessages(conversationId: string, userId: string, force = false): Promise<MessageData[]> {
+  const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
+    .select("cleared_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (settingsError) throw settingsError;
+  const clearedAt = settings?.cleared_at ?? null;
   const messages = await localFirst(userId, `messages:${conversationId}`, async () => {
-    const { data, error } = await supabase.from("messages")
-      .select("id, sender_id, body, created_at")
+    let query = supabase.from("messages")
+      .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
+    if (clearedAt) query = query.gt("created_at", clearedAt);
+    const { data, error } = await query;
     if (error) throw error;
-    return (data ?? []).map((message) => ({ id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at }));
+    return (data ?? []).map((message) => ({
+      id: message.id,
+      senderId: message.sender_id,
+      body: message.body,
+      createdAt: message.created_at,
+      replyToMessageId: message.reply_to_message_id,
+      attachmentPath: message.attachment_path,
+      attachmentName: message.attachment_name,
+      attachmentMimeType: message.attachment_mime_type,
+      isForwarded: message.is_forwarded,
+    }));
   }, { force });
+  const visibleMessages = clearedAt
+    ? messages.filter((message) => message.createdAt > clearedAt)
+    : messages;
+  if (visibleMessages.length !== messages.length) {
+    await writeStored(userId, `messages:${conversationId}`, visibleMessages);
+  }
+  const withAttachmentUrls = await Promise.all(visibleMessages.map(async (message) => ({
+    ...message,
+    attachmentUrl: message.attachmentPath
+      && getAttachmentKind(message.attachmentMimeType, message.attachmentName, message.attachmentPath) === "image"
+      ? await getMessageImageUrl(message.attachmentPath)
+      : null,
+  })));
   try {
-    await acknowledgeMessagesDelivered(conversationId, userId, messages);
-    const updated = await addDeliveryStatuses(userId, messages);
-    if (JSON.stringify(updated) !== JSON.stringify(messages)) {
+    await acknowledgeMessagesDelivered(conversationId, userId, visibleMessages);
+    const updated = await addDeliveryStatuses(userId, visibleMessages);
+    if (JSON.stringify(updated) !== JSON.stringify(visibleMessages)) {
       await writeStored(userId, `messages:${conversationId}`, updated);
     }
-    return updated;
+    return withAttachmentUrls.map((message) => ({
+      ...message,
+      deliveryStatus: updated.find((item) => item.id === message.id)?.deliveryStatus,
+    }));
   } catch (error) {
     console.warn("[chat] Could not refresh message delivery status", error);
-    return messages;
+    return withAttachmentUrls;
   }
+}
+
+export async function loadConversationAttachments(conversationId: string, userId: string): Promise<SharedAttachmentData[]> {
+  const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
+    .select("cleared_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (settingsError) throw settingsError;
+  const attachments: SharedAttachmentData[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    let query = supabase.from("messages")
+      .select("id, attachment_path, attachment_name, attachment_mime_type, created_at")
+      .eq("conversation_id", conversationId)
+      .not("attachment_path", "is", null)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    if (settings?.cleared_at) query = query.gt("created_at", settings.cleared_at);
+    const { data, error } = await query.range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    attachments.push(...rows.flatMap((message) => {
+      if (!message.attachment_path) return [];
+      const kind = getAttachmentKind(message.attachment_mime_type, message.attachment_name, message.attachment_path);
+      const fallbackName = kind === "image" ? "Photo" : kind === "video" ? "Video"
+        : kind === "audio" ? "Audio" : message.attachment_path.split("/").pop() ?? "Attachment";
+      return [{
+        id: message.id,
+        attachmentPath: message.attachment_path,
+        attachmentName: message.attachment_name ?? fallbackName,
+        attachmentMimeType: message.attachment_mime_type,
+        createdAt: message.created_at,
+        kind,
+      }];
+    }));
+    if (rows.length < pageSize) return attachments;
+  }
+}
+
+export async function loadConversationAttachment(
+  conversationId: string,
+  userId: string,
+  messageId: string,
+): Promise<SharedAttachmentData & { signedUrl: string }> {
+  const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
+    .select("cleared_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (settingsError) throw settingsError;
+  let query = supabase.from("messages")
+    .select("id, attachment_path, attachment_name, attachment_mime_type, created_at")
+    .eq("id", messageId)
+    .eq("conversation_id", conversationId)
+    .not("attachment_path", "is", null);
+  if (settings?.cleared_at) query = query.gt("created_at", settings.cleared_at);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!data?.attachment_path) throw new Error("This attachment is no longer available.");
+  const kind = getAttachmentKind(data.attachment_mime_type, data.attachment_name, data.attachment_path);
+  const fallbackName = kind === "image" ? "Photo" : kind === "video" ? "Video"
+    : kind === "audio" ? "Audio" : data.attachment_path.split("/").pop() ?? "Attachment";
+  return {
+    id: data.id,
+    attachmentPath: data.attachment_path,
+    attachmentName: data.attachment_name ?? fallbackName,
+    attachmentMimeType: data.attachment_mime_type,
+    createdAt: data.created_at,
+    kind,
+    signedUrl: await getMessageImageUrl(data.attachment_path),
+  };
 }
 
 // Fetches only messages newer than what is stored and appends them.
 export async function syncMessages(conversationId: string, userId: string): Promise<void> {
-  const stored = await readStored<MessageData[]>(userId, `messages:${conversationId}`);
-  if (!stored) { await loadMessages(conversationId, userId, true); return; }
+  const clearEpochKey = `${userId}:${conversationId}`;
+  const startingClearEpoch = messageClearEpoch.get(clearEpochKey) ?? 0;
+  const [{ data: settings, error: settingsError }, cachedMessages] = await Promise.all([
+    supabase.from("conversation_user_settings")
+      .select("cleared_at")
+      .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
+      .maybeSingle(),
+    readStored<MessageData[]>(userId, `messages:${conversationId}`),
+  ]);
+  if (settingsError) throw settingsError;
+  const clearedAt = settings?.cleared_at ?? null;
+  const stored = cachedMessages === undefined || !clearedAt
+    ? cachedMessages
+    : cachedMessages.filter((message) => message.createdAt > clearedAt);
+  if (stored && cachedMessages && stored.length !== cachedMessages.length) {
+    await writeStored(userId, `messages:${conversationId}`, stored);
+  }
+  if (!stored) {
+    await loadMessages(conversationId, userId, true);
+    if ((messageClearEpoch.get(clearEpochKey) ?? 0) !== startingClearEpoch) {
+      await loadMessages(conversationId, userId, true);
+    }
+    return;
+  }
   const last = stored[stored.length - 1]?.createdAt;
-  let query = supabase.from("messages").select("id, sender_id, body, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: true });
+  let query = supabase.from("messages").select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded").eq("conversation_id", conversationId).order("created_at", { ascending: true });
+  if (clearedAt) query = query.gt("created_at", clearedAt);
   if (last) query = query.gte("created_at", last);
   const { data, error } = await query;
   if (error) throw error;
   const known = new Set(stored.map((message) => message.id));
-  const fresh = data.filter((message) => !known.has(message.id)).map((message) => ({ id: message.id, senderId: message.sender_id, body: message.body, createdAt: message.created_at }));
+  const fresh = data.filter((message) => !known.has(message.id)).map((message) => ({
+    id: message.id,
+    senderId: message.sender_id,
+    body: message.body,
+    createdAt: message.created_at,
+    replyToMessageId: message.reply_to_message_id,
+    attachmentPath: message.attachment_path,
+    attachmentName: message.attachment_name,
+    attachmentMimeType: message.attachment_mime_type,
+    isForwarded: message.is_forwarded,
+  }));
   const combined = [...stored, ...fresh].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   await acknowledgeMessagesDelivered(conversationId, userId, fresh);
   const updated = await addDeliveryStatuses(userId, combined);
+  if ((messageClearEpoch.get(clearEpochKey) ?? 0) !== startingClearEpoch) return;
   if (JSON.stringify(updated) !== JSON.stringify(stored)) {
     await writeStored(userId, `messages:${conversationId}`, updated);
   }
 }
 
-export async function sendMessage(conversationId: string, senderId: string, body: string): Promise<MessageData> {
+export async function sendMessage(
+  conversationId: string,
+  senderId: string,
+  body: string,
+  options: {
+    replyToMessageId?: string | null;
+    attachmentPath?: string | null;
+    attachmentName?: string | null;
+    attachmentMimeType?: string | null;
+    isForwarded?: boolean;
+  } = {},
+): Promise<MessageData> {
   const { data, error } = await supabase.from("messages")
-    .insert({ conversation_id: conversationId, sender_id: senderId, body })
-    .select("id, sender_id, body, created_at")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      body: body.trim() || (options.attachmentPath
+        ? options.attachmentMimeType?.startsWith("image/") ? "Photo" : "Attachment"
+        : ""),
+      reply_to_message_id: options.replyToMessageId ?? null,
+      attachment_path: options.attachmentPath ?? null,
+      attachment_name: options.attachmentName ?? null,
+      attachment_mime_type: options.attachmentMimeType ?? null,
+      is_forwarded: options.isForwarded ?? false,
+    })
+    .select("id, sender_id, body, created_at, reply_to_message_id, attachment_path, attachment_name, attachment_mime_type, is_forwarded")
     .single();
   if (error) throw error;
-  const message: MessageData = { id: data.id, senderId: data.sender_id, body: data.body, createdAt: data.created_at, deliveryStatus: "sent" };
-  await updateStored<MessageData[]>(senderId, `messages:${conversationId}`, (thread) => thread.some((item) => item.id === message.id) ? thread : [...thread, message]);
+  const message: MessageData = {
+    id: data.id,
+    senderId: data.sender_id,
+    body: data.body,
+    createdAt: data.created_at,
+    replyToMessageId: data.reply_to_message_id,
+    attachmentPath: data.attachment_path,
+    attachmentName: data.attachment_name,
+    attachmentMimeType: data.attachment_mime_type,
+    isForwarded: data.is_forwarded,
+    attachmentUrl: data.attachment_path
+      && getAttachmentKind(data.attachment_mime_type, data.attachment_name, data.attachment_path) === "image"
+      ? await getMessageImageUrl(data.attachment_path)
+      : null,
+    deliveryStatus: "sent",
+  };
+  const storedMessage = { ...message };
+  delete storedMessage.attachmentUrl;
+  await updateStored<MessageData[]>(senderId, `messages:${conversationId}`, (thread) => thread.some((item) => item.id === message.id) ? thread : [...thread, storedMessage]);
   await updateStored<ConversationData[]>(senderId, conversationsKey, (rows) => rows.map((row) => row.id === conversationId
     ? { ...row, lastMessage: message.body, lastMessageSender: "You", lastMessageStatus: "sent", updatedAt: message.createdAt }
     : row));
@@ -993,6 +1333,49 @@ export async function uploadProfilePicture(userId: string, asset: ImageUploadAss
 export async function uploadRideBannerImage(userId: string, rideId: string, asset: ImageUploadAsset): Promise<string> {
   const path = `${userId}/${rideId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   return uploadImage("ride-banners", path, asset);
+}
+
+export async function uploadMessageMedia(userId: string, conversationId: string, asset: ImageUploadAsset): Promise<string> {
+  const path = `${userId}/${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  if (asset.fileSize != null && asset.fileSize > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+    throw new Error("Choose an attachment smaller than 20 MB.");
+  }
+  const response = await fetch(asset.uri);
+  if (!response.ok) throw new Error("Could not read the selected attachment.");
+  const file = await response.arrayBuffer();
+  if (file.byteLength > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+    throw new Error("Choose an attachment smaller than 20 MB.");
+  }
+  const contentType = (asset.mimeType || response.headers.get("content-type") || "application/octet-stream")
+    .split(";")[0].trim().toLowerCase();
+  const extension = asset.fileName?.match(/\.([a-z0-9]{1,10})$/i)?.[1]?.toLowerCase()
+    ?? ({
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/heic": "heic",
+      "video/mp4": "mp4",
+      "video/quicktime": "mov",
+      "video/webm": "webm",
+      "audio/mpeg": "mp3",
+      "audio/mp4": "m4a",
+      "audio/wav": "wav",
+      "application/pdf": "pdf",
+    } as Record<string, string>)[contentType]
+    ?? "bin";
+  const storagePath = `${path}.${extension}`;
+  const { error } = await supabase.storage.from("message-media").upload(storagePath, file, {
+    cacheControl: "3600",
+    contentType,
+  });
+  if (error) throw error;
+  return storagePath;
+}
+
+export async function getMessageImageUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from("message-media").createSignedUrl(path, 60 * 60);
+  if (error) throw error;
+  return data.signedUrl;
 }
 
 // Pulls every top-level dataset into storage; screens only read from storage afterwards.
