@@ -11,6 +11,7 @@ import {
   addGroupConversationMembers,
   ConversationData,
   ConversationParticipantData,
+  createDirectConversation,
   createGroupConversation,
   FriendData,
   getImagePublicUrl,
@@ -22,9 +23,9 @@ import {
 export default function ChatMembersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { id: routeId, mode: routeMode } = useLocalSearchParams<{ id: string; mode: "add-user" | "create-group" }>();
-  const conversationId = typeof routeId === "string" ? routeId : null;
-  const mode = routeMode === "create-group" ? "create-group" : "add-user";
+  const { id: routeId, mode: routeMode } = useLocalSearchParams<{ id: string; mode: "add-user" | "create-group" | "new-chat" }>();
+  const mode = routeMode === "create-group" ? "create-group" : routeMode === "new-chat" ? "new-chat" : "add-user";
+  const conversationId = mode === "new-chat" ? null : typeof routeId === "string" ? routeId : null;
   const { ready, userId } = useAuth();
   const [conversation, setConversation] = useState<ConversationData | null>(null);
   const [participants, setParticipants] = useState<ConversationParticipantData[]>([]);
@@ -37,15 +38,24 @@ export default function ChatMembersScreen() {
   const [error, setError] = useState("");
 
   useFocusEffect(useCallback(() => {
-    if (!ready || !userId || !conversationId) return;
+    if (!ready || !userId || (mode !== "new-chat" && !conversationId)) return;
     let active = true;
     setLoading(true);
     setError("");
-    Promise.all([
-      loadConversations(userId, true),
-      loadConversationParticipants(conversationId, userId, true),
-      loadFriendRequests(userId, true),
-    ]).then(([conversations, people, requests]) => {
+    async function loadMembers() {
+      const requests = await loadFriendRequests(userId, true);
+      if (mode === "new-chat") {
+        if (active) {
+          setConversation(null);
+          setParticipants([]);
+          setFriends(requests.filter((friend) => friend.status === "accepted"));
+        }
+        return;
+      }
+      const [conversations, people] = await Promise.all([
+        loadConversations(userId, true),
+        loadConversationParticipants(conversationId!, userId, true),
+      ]);
       if (!active) return;
       const current = conversations.find((item) => item.id === conversationId) ?? null;
       if (!current) throw new Error("This conversation is unavailable.");
@@ -54,7 +64,8 @@ export default function ChatMembersScreen() {
       setConversation(current);
       setParticipants(people);
       setFriends(requests.filter((friend) => friend.status === "accepted"));
-    }).catch((cause: unknown) => {
+    }
+    void loadMembers().catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load chat members.");
     }).finally(() => {
       if (active) setLoading(false);
@@ -62,8 +73,8 @@ export default function ChatMembersScreen() {
     return () => { active = false; };
   }, [ready, userId, conversationId, mode]));
 
-  const currentMemberIds = new Set(participants.map((participant) => participant.userId));
   const availableFriends = useMemo(() => {
+    const currentMemberIds = new Set(participants.map((participant) => participant.userId));
     const query = search.trim().toLocaleLowerCase();
     return friends.filter((friend) =>
       !currentMemberIds.has(friend.otherUserId)
@@ -77,11 +88,21 @@ export default function ChatMembersScreen() {
   }
 
   async function submit() {
-    if (!userId || !conversation || !conversationId || selectedIds.length === 0 || saving) return;
+    if (!userId || selectedIds.length === 0 || saving) return;
+    if (mode !== "new-chat" && (!conversation || !conversationId)) return;
     setSaving(true);
     setError("");
     try {
-      if (mode === "create-group") {
+      if (mode === "new-chat" && selectedIds.length === 1) {
+        const selectedFriend = friends.find((friend) => friend.otherUserId === selectedIds[0]);
+        if (!selectedFriend) throw new Error("Choose an accepted friend to start a chat.");
+        const directId = await createDirectConversation(selectedFriend.otherUserId, userId);
+        router.replace({ pathname: "/chat/[id]", params: { id: directId, title: selectedFriend.name } });
+      } else if (mode === "new-chat") {
+        if (groupName.trim().length === 0) throw new Error("Enter a name for the group chat.");
+        const createdId = await createGroupConversation(selectedIds, groupName.trim(), userId);
+        router.replace({ pathname: "/chat/[id]", params: { id: createdId } });
+      } else if (mode === "create-group") {
         const existingMembers = participants
           .filter((participant) => participant.userId !== userId)
           .map((participant) => participant.userId);
@@ -92,27 +113,31 @@ export default function ChatMembersScreen() {
         );
         router.replace({ pathname: "/chat/[id]", params: { id: createdId } });
       } else {
-        await addGroupConversationMembers(conversationId, selectedIds, userId);
+        await addGroupConversationMembers(conversationId!, selectedIds, userId);
         router.replace({ pathname: "/chat/[id]", params: { id: conversationId } });
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update group members.");
+      setError(cause instanceof Error ? cause.message : mode === "new-chat" ? "Could not create this chat." : "Could not update group members.");
     } finally {
       setSaving(false);
     }
   }
 
-  const title = mode === "create-group" ? "Create a group chat" : "Add people";
+  const title = mode === "create-group" ? "Create a group chat" : mode === "new-chat" ? "New chat" : "Add people";
+  const showGroupName = mode === "create-group" || (mode === "new-chat" && selectedIds.length > 1);
+  const canSubmit = selectedIds.length > 0
+    && (!showGroupName || groupName.trim().length > 0)
+    && !saving;
 
   return <View style={styles.screen}>
     <View style={[styles.header, { paddingTop: Math.max(8, insets.top + 6) }]}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back to chat" onPress={() => router.back()} style={styles.back}><ArrowLeft color={colors.ink} size={19} /></Pressable>
       <View style={styles.headerCopy}><Text style={styles.title}>{title}</Text><Text style={styles.subtitle}>{conversation?.title ?? "Choose accepted friends"}</Text></View>
     </View>
-    {mode === "create-group" && <View style={styles.groupNameField}><Text style={styles.fieldLabel}>Group name</Text><TextInput value={groupName} onChangeText={setGroupName} maxLength={80} placeholder="Name this group" placeholderTextColor={colors.subtle} style={styles.groupNameInput} /></View>}
+    {showGroupName && <View style={styles.groupNameField}><Text style={styles.fieldLabel}>Group name</Text><TextInput value={groupName} onChangeText={setGroupName} maxLength={80} placeholder="Name this group" placeholderTextColor={colors.subtle} style={styles.groupNameInput} /></View>}
     <View style={styles.searchBar}><UserPlus color={colors.muted} size={16} /><TextInput value={search} onChangeText={setSearch} placeholder="Search friends" placeholderTextColor={colors.subtle} style={styles.searchInput} /></View>
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
-    {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : !conversation || error
+    {loading ? <ActivityIndicator color={colors.leaf} style={styles.loader} /> : (mode !== "new-chat" && !conversation) || error
       ? <EmptyState icon={Users} title="Members unavailable" description={error || "This chat is unavailable."} />
       : availableFriends.length
         ? <ScrollView contentContainerStyle={styles.list}>
@@ -125,10 +150,10 @@ export default function ChatMembersScreen() {
             </Pressable>;
           })}
         </ScrollView>
-        : <EmptyState icon={Users} title={search ? "No matching friends" : "No friends to add"} description={search ? "Try another name." : "Only accepted friends who are not already in this chat can be added."} />}
-    {!loading && !!conversation && !error && <Pressable accessibilityRole="button" accessibilityState={{ disabled: !selectedIds.length || saving }} disabled={!selectedIds.length || saving} onPress={() => void submit()} style={[styles.submitButton, (!selectedIds.length || saving) && styles.disabled]}>
+        : <EmptyState icon={Users} title={search ? "No matching friends" : "No friends to add"} description={search ? "Try another name." : mode === "new-chat" ? "Only accepted friends can start a direct chat or group with you." : "Only accepted friends who are not already in this chat can be added."} />}
+    {!loading && (mode === "new-chat" || !!conversation) && !error && <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canSubmit }} disabled={!canSubmit} onPress={() => void submit()} style={[styles.submitButton, !canSubmit && styles.disabled]}>
       {saving ? <ActivityIndicator size="small" color={colors.surface} /> : <Check color={colors.surface} size={17} />}
-      <Text style={styles.submitText}>{mode === "create-group" ? "Create group" : `Add ${selectedIds.length || ""} ${selectedIds.length === 1 ? "person" : "people"}`}</Text>
+      <Text style={styles.submitText}>{mode === "new-chat" ? selectedIds.length === 1 ? "Start chat" : "Create group" : mode === "create-group" ? "Create group" : `Add ${selectedIds.length || ""} ${selectedIds.length === 1 ? "person" : "people"}`}</Text>
     </Pressable>}
   </View>;
 }

@@ -23,7 +23,7 @@ export function FloatingActionMenu({ onRideCreated }: FloatingActionMenuProps) {
   const [progress] = useState(() => new Animated.Value(0));
   const actions = [
     { label: "New ride", icon: Bike, onPress: () => setCreateRideVisible(true) },
-    { label: "New chat", icon: MessageCircle, onPress: () => router.push({ pathname: "/(tabs)/friends", params: { tab: "Friends" } }) },
+    { label: "New chat", icon: MessageCircle, onPress: () => router.push({ pathname: "/chat-members/[id]", params: { id: "new", mode: "new-chat" } }) },
     { label: "Friends map", icon: MapPin, onPress: () => router.push("/friends-map") },
   ];
 
