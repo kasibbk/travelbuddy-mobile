@@ -14,9 +14,10 @@ import { ImagePreviewModal } from "../../components/image-preview-modal";
 import { VideoAttachmentThumbnail } from "../../components/video-attachment-thumbnail";
 import { colors } from "../../components/theme";
 import { useStoreVersion } from "../../lib/store-events";
-import { ChatBackground, clearConversationMessages, ConversationData, getAttachmentKind, getImagePublicUrl, ImageUploadAsset, leaveGroupConversation, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MAX_MESSAGE_ATTACHMENT_SIZE_BYTES, MessageData, restoreConversation, sendMessage, setConversationActive, syncMessages, updateConversationPreferences, uploadMessageMedia } from "../../lib/app-data";
+import { ChatBackground, clearConversationMessages, ConversationData, getAttachmentKind, getImagePublicUrl, getMessageImageUrl, ImageUploadAsset, leaveGroupConversation, loadConversationParticipants, loadConversations, loadMessages, markConversationRead, MAX_MESSAGE_ATTACHMENT_SIZE_BYTES, MessageData, restoreConversation, sendMessage, setConversationActive, syncMessages, updateConversationPreferences, uploadMessageMedia } from "../../lib/app-data";
 
 const COMPOSER_FIELD_MIN_HEIGHT = 42;
+const IMAGE_URL_TTL_MS = 55 * 60 * 1000;
 const CHAT_BACKGROUNDS: Record<ChatBackground, { label: string; color: string }> = {
   default: { label: "Default", color: "#F7F8F3" },
   forest: { label: "Forest", color: "#E8F0E7" },
@@ -85,7 +86,22 @@ export default function ChatScreen() {
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingActiveRef = useRef(false);
+  const imageUrlsRef = useRef(new Map<string, { expiresAt: number; promise: Promise<string> }>());
   const insets = useSafeAreaInsets();
+
+  const resolveImageUrl = useCallback((path: string): Promise<string> => {
+    const key = JSON.stringify([userId, id, path]);
+    const cached = imageUrlsRef.current.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+    const promise = getMessageImageUrl(path);
+    const entry = { expiresAt: Date.now() + IMAGE_URL_TTL_MS, promise };
+    imageUrlsRef.current.set(key, entry);
+    void promise.catch(() => {
+      if (imageUrlsRef.current.get(key) === entry) imageUrlsRef.current.delete(key);
+    });
+    return promise;
+  }, [userId, id]);
 
   useEffect(() => {
     if (ready && userId && id && !Array.isArray(id)) void syncMessages(id, userId).catch(() => undefined);
@@ -117,7 +133,7 @@ export default function ChatScreen() {
         return;
       }
       const [thread, participants] = await Promise.all([
-        loadMessages(id, userId),
+        loadMessages(id, userId, false, resolveImageUrl),
         loadConversationParticipants(id, userId),
       ]);
       if (active) {
@@ -130,7 +146,7 @@ export default function ChatScreen() {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load this conversation.");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ready, userId, id]);
+  }, [ready, userId, id, resolveImageUrl]);
 
   useFocusEffect(useCallback(() => {
     if (!ready || !userId || !conversation || loading || conversation.id !== id) return;
@@ -192,11 +208,11 @@ export default function ChatScreen() {
   useEffect(() => {
     if (loading || !conversationId || !userId) return;
     let active = true;
-    loadMessages(conversationId, userId)
+    loadMessages(conversationId, userId, false, resolveImageUrl)
       .then((thread) => { if (active) setMessages(thread); })
       .catch((cause: unknown) => console.warn("[chat] Could not refresh active conversation messages", cause));
     return () => { active = false; };
-  }, [conversationId, loading, storeVersion, userId]);
+  }, [conversationId, loading, storeVersion, userId, resolveImageUrl]);
 
   useEffect(() => {
     if (loading || !conversationId || !userId || !lastMessageAt) return;
@@ -477,12 +493,13 @@ export default function ChatScreen() {
         attachmentPath,
         attachmentName: attachmentAsset?.fileName ?? null,
         attachmentMimeType: attachmentAsset?.mimeType ?? null,
+        resolveImageUrl,
       });
       setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
       setReplyTarget(null);
       setAttachmentAsset(null);
     } catch (cause) {
-      handleDraftChange(body);
+      if (body) setDraft((current) => current ? `${body}\n${current}` : body);
       setSendError(cause instanceof Error ? cause.message : "Could not send your message.");
     } finally {
       setSending(false);
@@ -552,7 +569,7 @@ export default function ChatScreen() {
         <View style={styles.attachmentPreviewCopy}><Text numberOfLines={1} style={styles.attachmentLabel}>{attachmentAsset.fileName ?? "Attachment selected"}</Text><Text style={styles.attachmentSize}>{formatAttachmentSize(attachmentAsset.fileSize) ?? "Ready to send"}</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel="Remove attachment" onPress={() => setAttachmentAsset(null)}><X color={colors.muted} size={18} /></Pressable>
       </View>}
-      <View style={styles.composerRow}><Pressable accessibilityRole="button" accessibilityLabel="Attach a file" disabled={sending} onPress={() => setAttachmentPickerOpen(true)} style={styles.attachButton}><Paperclip color={colors.forest} size={20} /></Pressable><View style={styles.composerField}><TextInput value={draft} onChangeText={handleDraftChange} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} editable={!sending} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: (!draft.trim() && !attachmentAsset) || sending }} disabled={(!draft.trim() && !attachmentAsset) || sending} onPress={() => void submitMessage()} style={[styles.sendButton, ((!draft.trim() && !attachmentAsset) || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable></View>
+      <View style={styles.composerRow}><Pressable accessibilityRole="button" accessibilityLabel="Attach a file" disabled={sending} onPress={() => setAttachmentPickerOpen(true)} style={styles.attachButton}><Paperclip color={colors.forest} size={20} /></Pressable><View style={styles.composerField}><TextInput value={draft} onChangeText={handleDraftChange} placeholder="Write a message" placeholderTextColor={colors.subtle} multiline maxLength={5000} style={styles.composerInput} /></View><Pressable accessibilityLabel="Send message" accessibilityState={{ disabled: (!draft.trim() && !attachmentAsset) || sending }} disabled={(!draft.trim() && !attachmentAsset) || sending} onPress={() => void submitMessage()} style={[styles.sendButton, ((!draft.trim() && !attachmentAsset) || sending) && styles.sendButtonDisabled]}>{sending ? <ActivityIndicator size="small" color={colors.surface} /> : <Send color={colors.surface} size={16} />}</Pressable></View>
       {!!sendError && <Text accessibilityRole="alert" style={styles.sendError}>{sendError}</Text>}
     </View>}
     <ImagePreviewModal imageUrl={previewImage?.uri ?? null} visible={!!previewImage} label={previewImage?.label ?? "Shared photo"} onClose={() => setPreviewImage(null)} />
