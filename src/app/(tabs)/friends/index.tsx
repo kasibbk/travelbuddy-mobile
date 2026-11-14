@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, MapPin, MessageCircle, Search, UserPlus, Users, X } from "lucide-react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { AppHeader } from "../../../components/app-header";
 import { Avatar } from "../../../components/avatar";
 import { EmptyState } from "../../../components/empty-state";
@@ -16,8 +16,9 @@ type FriendsTab = "Nearby" | "Search" | "Friends" | "Requests";
 
 export default function FriendsScreen() {
   const router = useRouter();
+  const { tab: requestedTab } = useLocalSearchParams<{ tab?: string }>();
   const { ready, userId } = useAuth();
-  const [tab, setTab] = useState<FriendsTab>("Nearby");
+  const [tab, setTab] = useState<FriendsTab>(requestedTab === "Friends" ? "Friends" : "Nearby");
   const [query, setQuery] = useState("");
   const [nearby, setNearby] = useState<NearbyRiderData[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendData[]>([]);
@@ -35,6 +36,10 @@ export default function FriendsScreen() {
   const liveSharingOperation = useRef(0);
   const liveSharingBusyRef = useRef(false);
   const storeVersion = useStoreVersion();
+
+  useFocusEffect(useCallback(() => {
+    if (requestedTab === "Friends") setTab("Friends");
+  }, [requestedTab]));
 
   useFocusEffect(useCallback(() => {
     if (!ready) return;
@@ -184,7 +189,7 @@ export default function FriendsScreen() {
     setRefreshing(false);
   }
 
-  return <PageShell refreshing={refreshing} onRefresh={refreshData}><AppHeader eyebrow="GOOD COMPANY TRAVELS" title="Find your people" subtitle="Meet nearby riders or search public profiles worldwide." />
+  return <PageShell refreshing={refreshing} onRefresh={refreshData} showFloatingActions showAppTopBar><AppHeader eyebrow="GOOD COMPANY TRAVELS" title="Find your people" subtitle="Meet nearby riders or search public profiles worldwide." />
     {tab === "Nearby" && <View style={styles.locationCard}><View style={styles.locationIcon}><MapPin color={colors.leaf} size={17} /></View><View style={styles.locationCopy}><Text style={styles.locationTitle}>Nearby riders</Text><Text style={styles.locationSubtitle}>Location-based results from riders who opted in.</Text></View></View>}
     {tab === "Friends" && <View style={[styles.locationCard, styles.liveLocationCard]}>
       <View style={styles.liveSharingRow}>
@@ -202,10 +207,6 @@ export default function FriendsScreen() {
             thumbColor={colors.surface}
           />}
       </View>
-      <Pressable accessibilityRole="button" onPress={() => router.push("/friends-map")} style={styles.mapButton}>
-        <MapPin color={colors.forest} size={14} />
-        <Text style={styles.mapButtonText}>View friends on map</Text>
-      </Pressable>
       {!!liveSharingError && <Text accessibilityRole="alert" style={styles.liveSharingError}>{liveSharingError}</Text>}
     </View>}
     <View style={styles.tabs}>{(["Nearby", "Search", "Friends", "Requests"] as const).map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabActive]}><Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text></Pressable>)}</View>
@@ -252,7 +253,6 @@ const styles = StyleSheet.create({
   liveLocationCard: { flexDirection: "column", alignItems: "stretch" },
   liveSharingRow: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10 },
   locationIcon: { width: 32, height: 32, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "#F8F9F3" }, locationCopy: { flex: 1, gap: 3 }, locationTitle: { color: colors.ink, fontSize: 10, fontWeight: "700" }, locationSubtitle: { color: colors.muted, fontSize: 8 },
-  mapButton: { width: "100%", minHeight: 38, marginTop: 10, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, mapButtonText: { color: colors.forest, fontSize: 9, fontWeight: "700" },
   liveSharingError: { marginTop: 7, color: "#9B493C", fontSize: 9, lineHeight: 13 },
   tabs: { marginHorizontal: 20, marginBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", justifyContent: "space-between", gap: 12 }, tab: { paddingBottom: 9 }, tabActive: { borderBottomWidth: 2, borderBottomColor: colors.forest }, tabText: { color: colors.muted, fontSize: 10, fontWeight: "600" }, tabTextActive: { color: colors.forest, fontWeight: "800" },
   search: { height: 39, marginHorizontal: 16, marginBottom: 18, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 8 }, searchInput: { flex: 1, color: colors.ink, fontSize: 10 },

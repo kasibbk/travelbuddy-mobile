@@ -50,7 +50,7 @@ export default function MessagesScreen() {
 
   const visible = useMemo(() => conversations.filter((conversation) => tab === "All" || conversation.kind === "ride"), [conversations, tab]);
 
-  return <PageShell refreshing={refreshing} onRefresh={refreshConversations}><AppHeader eyebrow="MAKE THE PLAN, KEEP THE FRIEND" title="Messages" subtitle="Ride details, coffee stops, and the occasional “where are you?”" />
+  return <PageShell refreshing={refreshing} onRefresh={refreshConversations} showFloatingActions showAppTopBar><AppHeader eyebrow="MAKE THE PLAN, KEEP THE FRIEND" title="Messages" subtitle="Ride details, coffee stops, and the occasional “where are you?”" />
     <View style={styles.tabs}>{["All", "Ride chats"].map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabActive]}><Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text></Pressable>)}</View>
     <View style={styles.inboxNote}><MessageCircle color={colors.leaf} size={15} /><Text style={styles.inboxNoteText}>Ride conversations are visible to approved riders and their admins.</Text></View>
     {!!refreshError && <Text accessibilityRole="alert" style={styles.refreshError}>{refreshError}</Text>}
