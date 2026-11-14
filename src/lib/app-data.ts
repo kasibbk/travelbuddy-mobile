@@ -995,7 +995,12 @@ export async function loadSharedActiveRides(otherUserId: string, userId: string,
   }, { force });
 }
 
-export async function loadMessages(conversationId: string, userId: string, force = false): Promise<MessageData[]> {
+export async function loadMessages(
+  conversationId: string,
+  userId: string,
+  force = false,
+  resolveImageUrl: (path: string) => Promise<string> = getMessageImageUrl,
+): Promise<MessageData[]> {
   const { data: settings, error: settingsError } = await supabase.from("conversation_user_settings")
     .select("cleared_at")
     .eq("user_id", userId)
@@ -1033,7 +1038,7 @@ export async function loadMessages(conversationId: string, userId: string, force
     ...message,
     attachmentUrl: message.attachmentPath
       && getAttachmentKind(message.attachmentMimeType, message.attachmentName, message.attachmentPath) === "image"
-      ? await getMessageImageUrl(message.attachmentPath)
+      ? await resolveImageUrl(message.attachmentPath)
       : null,
   })));
   try {
@@ -1188,6 +1193,7 @@ export async function sendMessage(
     attachmentName?: string | null;
     attachmentMimeType?: string | null;
     isForwarded?: boolean;
+    resolveImageUrl?: (path: string) => Promise<string>;
   } = {},
 ): Promise<MessageData> {
   const { data, error } = await supabase.from("messages")
@@ -1218,7 +1224,7 @@ export async function sendMessage(
     isForwarded: data.is_forwarded,
     attachmentUrl: data.attachment_path
       && getAttachmentKind(data.attachment_mime_type, data.attachment_name, data.attachment_path) === "image"
-      ? await getMessageImageUrl(data.attachment_path)
+      ? await (options.resolveImageUrl ?? getMessageImageUrl)(data.attachment_path)
       : null,
     deliveryStatus: "sent",
   };
