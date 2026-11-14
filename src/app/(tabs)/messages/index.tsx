@@ -54,7 +54,7 @@ export default function MessagesScreen() {
     return matchesTab && (!query || `${conversation.title} ${conversation.lastMessage} ${conversation.detail}`.toLocaleLowerCase().includes(query));
   }), [conversations, search, tab]);
 
-  return <PageShell refreshing={refreshing} onRefresh={refreshConversations}>
+  return <PageShell refreshing={refreshing} onRefresh={refreshConversations} showFloatingActions showAppTopBar>
     <View style={styles.searchBar}><Search color={colors.muted} size={17} /><TextInput value={search} onChangeText={setSearch} placeholder="Search chats" placeholderTextColor={colors.subtle} returnKeyType="search" style={styles.searchInput} />{!!search && <Pressable accessibilityRole="button" accessibilityLabel="Clear chat search" onPress={() => setSearch("")}><X color={colors.muted} size={17} /></Pressable>}</View>
     <View style={styles.tabs}>{["All", "Ride chats"].map((item) => <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabActive]}><Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item}</Text></Pressable>)}</View>
     {!!refreshError && <Text accessibilityRole="alert" style={styles.refreshError}>{refreshError}</Text>}
