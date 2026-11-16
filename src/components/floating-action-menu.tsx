@@ -23,7 +23,7 @@ export function FloatingActionMenu({ onRideCreated }: FloatingActionMenuProps) {
   const [progress] = useState(() => new Animated.Value(0));
   const actions = [
     { label: "New ride", icon: Bike, onPress: () => setCreateRideVisible(true) },
-    { label: "New chat", icon: MessageCircle, onPress: () => router.push({ pathname: "/(tabs)/friends", params: { tab: "Friends" } }) },
+    { label: "New chat", icon: MessageCircle, onPress: () => router.push({ pathname: "/chat-members/[id]", params: { id: "new", mode: "new-chat" } }) },
     { label: "Friends map", icon: MapPin, onPress: () => router.push("/friends-map") },
   ];
 
@@ -36,30 +36,27 @@ export function FloatingActionMenu({ onRideCreated }: FloatingActionMenuProps) {
     }).start();
   }, [expanded, progress]);
 
-  return <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+  return <View pointerEvents="box-none" style={styles.menuLayer}>
     {expanded && <Pressable accessibilityLabel="Close actions menu" onPress={() => setExpanded(false)} style={styles.backdrop} />}
-    {actions.map((action, index) => {
-    const angle = -90 - (90 * index) / (actions.length - 1);
-    const radians = (angle * Math.PI) / 180;
-    const x = Math.cos(radians) * RADIUS;
-    const y = -Math.sin(radians) * RADIUS;
-    const opacity = progress;
-    const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
-      const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [-x, 0] });
-      const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [y, 0] });
+    {expanded && actions.map((action, index) => {
+      const angle = -90 - (90 * index) / (actions.length - 1);
+      const radians = (angle * Math.PI) / 180;
+      const x = Math.cos(radians) * RADIUS;
+      const y = -Math.sin(radians) * RADIUS;
       const Icon = action.icon;
-      return <Animated.View key={action.label} pointerEvents={expanded ? "auto" : "none"} style={[
+      return <Animated.View key={action.label} style={[
         styles.actionPosition,
         { right: 49 - x - ACTION_SIZE / 2, bottom: Math.max(12, insets.bottom) + 41 - ACTION_SIZE / 2 + y },
-        { opacity, transform: [{ translateX }, { translateY }, { scale }] },
+        { opacity: progress },
       ]}>
-        <Pressable accessibilityRole="button" accessibilityLabel={action.label} onPress={() => { setExpanded(false); action.onPress(); }} style={styles.actionButton}>
+        <Pressable hitSlop={8} accessibilityRole="button" accessibilityLabel={action.label} onPress={() => { setExpanded(false); action.onPress(); }} style={styles.actionButton}>
           <Icon color={colors.forest} size={19} />
         </Pressable>
       </Animated.View>;
     })}
     <Pressable
       accessibilityRole="button"
+      hitSlop={8}
       accessibilityLabel={expanded ? "Close actions menu" : "Open actions menu"}
       accessibilityState={{ expanded }}
       onPress={() => setExpanded((value) => !value)}
@@ -82,8 +79,9 @@ export function FloatingActionMenu({ onRideCreated }: FloatingActionMenuProps) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "#193A3210" },
-  actionPosition: { position: "absolute", width: ACTION_SIZE, height: ACTION_SIZE, alignItems: "center", justifyContent: "center" },
+  menuLayer: { ...StyleSheet.absoluteFill, zIndex: 20, elevation: 20 },
+  backdrop: { ...StyleSheet.absoluteFill, zIndex: 0, backgroundColor: "#193A3210" },
+  actionPosition: { position: "absolute", zIndex: 1, elevation: 6, width: ACTION_SIZE, height: ACTION_SIZE, alignItems: "center", justifyContent: "center" },
   actionButton: { width: ACTION_SIZE, height: ACTION_SIZE, borderRadius: ACTION_SIZE / 2, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, elevation: 5, shadowColor: "#193A32", shadowOpacity: 0.16, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
-  mainButton: { position: "absolute", width: MAIN_SIZE, height: MAIN_SIZE, borderRadius: MAIN_SIZE / 2, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest, elevation: 7, shadowColor: "#193A32", shadowOpacity: 0.25, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
+  mainButton: { position: "absolute", zIndex: 2, width: MAIN_SIZE, height: MAIN_SIZE, borderRadius: MAIN_SIZE / 2, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest, elevation: 7, shadowColor: "#193A32", shadowOpacity: 0.25, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
 });
