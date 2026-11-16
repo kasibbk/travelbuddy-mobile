@@ -2,12 +2,22 @@ import { createContext, PropsWithChildren, useCallback, useEffect, useRef, useSt
 import { Keyboard, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "./theme";
+import { FloatingActionMenu } from "./floating-action-menu";
+import { AppHeaderProvider, AppTopBar } from "./app-header";
+import type { RideCardData } from "../lib/app-data";
 
 export const PageScrollLockContext = createContext<((locked: boolean) => void) | null>(null);
 
-type PageShellProps = PropsWithChildren<{ refreshing?: boolean; onRefresh?: () => void; focusedFieldY?: number | null }>;
+type PageShellProps = PropsWithChildren<{
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  focusedFieldY?: number | null;
+  showFloatingActions?: boolean;
+  showAppTopBar?: boolean;
+  onRideCreated?: (ride: RideCardData) => void;
+}>;
 
-export function PageShell({ children, refreshing = false, onRefresh, focusedFieldY }: PageShellProps) {
+export function PageShell({ children, refreshing = false, onRefresh, focusedFieldY, showFloatingActions = false, showAppTopBar = false, onRideCreated }: PageShellProps) {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const focusedFieldYRef = useRef(focusedFieldY);
@@ -28,17 +38,19 @@ export function PageShell({ children, refreshing = false, onRefresh, focusedFiel
     return () => subscription.remove();
   }, []);
 
-  return (
-    <PageScrollLockContext.Provider value={setMapInteraction}>
-      <View style={styles.screen}>
+  const content = <View style={styles.screen}>
+        {showAppTopBar && <AppTopBar />}
         <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined}>
           <ScrollView ref={scrollRef} scrollEnabled={!scrollLocked} automaticallyAdjustKeyboardInsets={Platform.OS === "ios"} refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.leaf} colors={[colors.leaf]} /> : undefined} showsVerticalScrollIndicator={false} contentContainerStyle={[styles.content, { paddingBottom: 30 + insets.bottom }]} keyboardShouldPersistTaps="handled">
             {children}
           </ScrollView>
         </KeyboardAvoidingView>
-      </View>
-    </PageScrollLockContext.Provider>
-  );
+        {showFloatingActions && <FloatingActionMenu onRideCreated={onRideCreated} />}
+      </View>;
+
+  return <PageScrollLockContext.Provider value={setMapInteraction}>
+    {showAppTopBar ? <AppHeaderProvider>{content}</AppHeaderProvider> : content}
+  </PageScrollLockContext.Provider>;
 }
 
 const styles = StyleSheet.create({

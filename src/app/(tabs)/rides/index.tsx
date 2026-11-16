@@ -127,7 +127,7 @@ export default function MyRidesScreen() {
     }
   }
 
-  return <PageShell refreshing={refreshing} onRefresh={refreshData}>
+  return <PageShell refreshing={refreshing} onRefresh={refreshData} showFloatingActions showAppTopBar onRideCreated={(ride) => setRides((current) => [ride, ...current.filter((item) => item.id !== ride.id)].sort((left, right) => left.startsAt.localeCompare(right.startsAt)))}>
     <AppHeader eyebrow="YOUR ROUTES, YOUR CREW" title="My rides" subtitle="Everything you’re planning or taking the lead on." />
     <View style={styles.stats}>
       <Stat value={String(activeRides.length).padStart(2, "0")} label="ACTIVE" />

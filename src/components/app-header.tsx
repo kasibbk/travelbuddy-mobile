@@ -1,8 +1,7 @@
-import { useCallback, useState } from "react";
-import { useFocusEffect } from "expo-router";
-import { Bike, Bell, MapPin, Plus } from "lucide-react-native";
+import { createContext, PropsWithChildren, useCallback, useContext, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { Bike, Bell, MapPin } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { useRouter } from "expo-router";
 import { Avatar } from "./avatar";
 import { colors } from "./theme";
 import { useAuth } from "./auth-provider";
@@ -14,12 +13,17 @@ type AppHeaderProps = {
   eyebrow: string;
   title: string;
   subtitle?: string;
-  onCreate?: () => void;
 };
 
-export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps) {
-  const router = useRouter();
-  const { ready, userId, userEmail } = useAuth();
+type AppHeaderData = {
+  profile: ProfileData | null;
+  unreadCount: number;
+};
+
+const AppHeaderContext = createContext<AppHeaderData>({ profile: null, unreadCount: 0 });
+
+export function AppHeaderProvider({ children }: PropsWithChildren) {
+  const { ready, userId } = useAuth();
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const storeVersion = useStoreVersion();
@@ -40,47 +44,56 @@ export function AppHeader({ eyebrow, title, subtitle, onCreate }: AppHeaderProps
     return () => { active = false; };
   }, [ready, userId, storeVersion]));
 
+  return <AppHeaderContext.Provider value={{ profile, unreadCount }}>{children}</AppHeaderContext.Provider>;
+}
+
+export function AppTopBar() {
+  const router = useRouter();
+  const { userEmail } = useAuth();
+  const { profile, unreadCount } = useContext(AppHeaderContext);
   const initials = profile?.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()
     || userEmail?.slice(0, 2).toUpperCase()
     || "R";
 
-  return (
-    <View style={styles.wrapper}>
-      <View style={styles.topRow}>
-        <View style={styles.brand}>
-          <View style={styles.brandMark}><Bike color={colors.lime} size={19} strokeWidth={2.4} /></View>
-          <Text style={styles.brandName}>travelbuddy</Text>
-        </View>
-        <View style={styles.topActions}>
-          {onCreate && <Pressable accessibilityLabel="Create a ride" onPress={onCreate} style={styles.createIcon}><Plus color={colors.surface} size={19} /></Pressable>}
-          <Pressable accessibilityRole="button" accessibilityLabel={unreadCount ? `Notifications, ${unreadCount} unread` : "Notifications"} onPress={() => router.push("/notifications")} style={styles.iconButton}>
-            <Bell color={colors.ink} size={18} />
-            {unreadCount > 0 && <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text></View>}
-          </Pressable>
-          <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} imageUrl={getImagePublicUrl("profile-images", profile?.avatarPath ?? null)} size={36} /></Pressable>
-        </View>
+  return <View style={styles.topBar}>
+    <View style={styles.topRow}>
+      <View style={styles.brand}>
+        <View style={styles.brandMark}><Bike color={colors.lime} size={19} strokeWidth={2.4} /></View>
+        <Text style={styles.brandName}>travelbuddy</Text>
       </View>
-      <View style={styles.titleBlock}>
+      <View style={styles.topActions}>
+        <Pressable accessibilityRole="button" accessibilityLabel={unreadCount ? `Notifications, ${unreadCount} unread` : "Notifications"} onPress={() => router.push("/notifications")} style={styles.iconButton}>
+          <Bell color={colors.ink} size={18} />
+          {unreadCount > 0 && <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text></View>}
+        </Pressable>
+        <Pressable accessibilityLabel="Open profile" onPress={() => router.push("/profile")}><Avatar initials={initials} imageUrl={getImagePublicUrl("profile-images", profile?.avatarPath ?? null)} size={36} /></Pressable>
+      </View>
+    </View>
+  </View>;
+}
+
+export function AppHeader({ eyebrow, title, subtitle }: AppHeaderProps) {
+  const { profile } = useContext(AppHeaderContext);
+  return (
+    <View style={styles.titleBlock}>
         <View style={styles.eyebrowRow}><Text style={styles.eyebrow}>{eyebrow}</Text><View style={styles.location}><MapPin color={colors.orange} size={12} /><Text style={styles.locationText}>{profile?.homeCity?.toUpperCase() ?? "LOCATION NOT SET"}</Text></View></View>
         <Text style={styles.title}>{title}</Text>
         {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
-      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 18, backgroundColor: colors.paper },
+  topBar: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8, backgroundColor: colors.paper },
   topRow: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   brand: { flexDirection: "row", alignItems: "center", gap: 9 },
   brandMark: { width: 31, height: 31, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   brandName: { color: colors.ink, fontSize: 15, fontWeight: "800" },
   topActions: { flexDirection: "row", alignItems: "center", gap: 11 },
-  createIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.forest },
   iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", position: "relative" },
   notificationBadge: { position: "absolute", top: 0, right: -3, minWidth: 15, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.orange, borderWidth: 1, borderColor: colors.paper },
   notificationBadgeText: { color: colors.surface, fontSize: 8, fontWeight: "800" },
-  titleBlock: { paddingTop: 22 },
+  titleBlock: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 18 },
   eyebrowRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   eyebrow: { color: colors.muted, fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
   location: { flexDirection: "row", alignItems: "center", gap: 4 },
